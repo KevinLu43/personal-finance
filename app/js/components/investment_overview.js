@@ -5,8 +5,97 @@
 
 const INVESTMENT_ACTION_LABELS = { buy: '買入', sell: '賣出' };
 
+// Codes known to the directory, per market — built once, the lists are static.
+let knownTickerCodes = null;
+function isKnownTickerCode(market, code) {
+  if (!knownTickerCodes) {
+    knownTickerCodes = {
+      TW: new Set(TickerDirectory.TW.map((t) => t.code)),
+      US: new Set(TickerDirectory.US.map((t) => t.code)),
+    };
+  }
+  return knownTickerCodes[market].has(code);
+}
+
+// One entry per distinct market + ticker text on the trades whose 標的 isn't
+// a code the directory knows — typically a company name typed in before the
+// ticker field had a directory behind it — with the codes that name could be.
+function tickerFixGroups() {
+  const byKey = new Map();
+  for (const inv of Store.state.investments) {
+    if (inv.isDeleted || isKnownTickerCode(inv.market, inv.ticker)) continue;
+    const key = inv.market + '|' + inv.ticker;
+    const group = byKey.get(key) || { key, market: inv.market, ticker: inv.ticker, count: 0 };
+    group.count += 1;
+    byKey.set(key, group);
+  }
+  return [...byKey.values()].map((g) => ({ ...g, candidates: Models.suggestTickerCodes(TickerDirectory[g.market], g.ticker) }));
+}
+
+// Lists those trades with a suggested code for each and applies only what
+// the operator confirms. A row left on 不變更 with nothing typed is untouched.
+const TickerFixModal = {
+  emits: ['close'],
+  data() {
+    const groups = tickerFixGroups();
+    const choices = {};
+    for (const g of groups) {
+      // Pre-pick only a confident match (exact name or name starting with
+      // the text); anything vaguer starts on 不變更 for the operator to decide.
+      const best = g.candidates[0];
+      choices[g.key] = { select: best && best.rank <= 1 ? best.code : '', manual: '' };
+    }
+    return { groups, choices };
+  },
+  computed: {
+    pendingCount() {
+      return this.groups.filter((g) => this.finalCode(g)).length;
+    },
+  },
+  methods: {
+    finalCode(g) {
+      const c = this.choices[g.key];
+      const code = (c.manual.trim().toUpperCase() || c.select).trim();
+      return code && code !== g.ticker ? code : '';
+    },
+    marketLabel(m) {
+      return m === 'TW' ? '台股' : '美股';
+    },
+    async apply() {
+      for (const g of this.groups) {
+        const code = this.finalCode(g);
+        if (code) await Store.renameTicker(g.market, g.ticker, code);
+      }
+      this.$emit('close');
+    },
+  },
+  template: `
+    <div class="modal-backdrop" @click.self="$emit('close')">
+      <div class="modal">
+        <h3>補上股票代號</h3>
+        <div class="modal-body">
+          <p class="field-hint" style="margin: 0 0 12px;">這些交易的「標的」不是代號。確認每一列建議的代號,不需要改的保持「不變更」,按下套用後才會寫入。</p>
+          <div v-if="groups.length === 0" class="empty">所有交易的標的都已經是代號</div>
+          <div v-for="g in groups" :key="g.key" class="ticker-fix-row">
+            <div class="list-row-title">{{ g.ticker }}<span class="ticker-name">{{ marketLabel(g.market) }} · {{ g.count }} 筆</span></div>
+            <select v-model="choices[g.key].select">
+              <option value="">不變更</option>
+              <option v-for="c in g.candidates" :key="c.code" :value="c.code">{{ c.code }} {{ c.name }}</option>
+            </select>
+            <input v-model="choices[g.key].manual" placeholder="或自行輸入代號" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button @click="$emit('close')">取消</button>
+          <button class="primary" :disabled="pendingCount === 0" @click="apply">套用{{ pendingCount ? '(' + pendingCount + ')' : '' }}</button>
+        </div>
+      </div>
+    </div>
+  `,
+};
+
 const InvestmentOverviewView = {
-  components: { InvestmentRowItem, InvestmentFormModal },
+  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal },
   data() {
     const now = new Date();
     return {
@@ -18,9 +107,21 @@ const InvestmentOverviewView = {
       editingId: null,
       formDefaultDate: null,
       expandedDate: null, // which 交易明細 date group is expanded, one at a time
+      fixOpen: false, // the 補上代號 dialog
     };
   },
   computed: {
+    // Trades whose 標的 isn't a known code; the notice bar only appears when
+    // one of them looks like a company name (a confident or Chinese-text match),
+    // so a genuinely unlisted code never nags.
+    fixGroups() {
+      return tickerFixGroups();
+    },
+    needsTickerFix() {
+      return this.fixGroups.some(
+        (g) => g.candidates.some((c) => c.rank <= 1) || (/[^ -~]/.test(g.ticker) && g.candidates.length > 0)
+      );
+    },
     // Whole-history — "what do I hold and what have I made" is a running
     // total, not scoped to any one month.
     allHoldings() {
@@ -151,6 +252,11 @@ const InvestmentOverviewView = {
         <h2>投資總覽<span class="muted"> · 已實現 {{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}</span></h2>
       </div>
 
+      <div v-if="needsTickerFix" class="notice-bar">
+        <span>有 {{ fixGroups.length }} 種標的還沒有股票代號</span>
+        <button class="primary" @click="fixOpen = true">補上代號</button>
+      </div>
+
       <div class="mode-toggle">
         <button :class="{ active: selectedMarket === 'TW' }" @click="selectedMarket = 'TW'">台股</button>
         <button :class="{ active: selectedMarket === 'US' }" @click="selectedMarket = 'US'">美股</button>
@@ -242,6 +348,8 @@ const InvestmentOverviewView = {
           </div>
         </section>
       </div>
+
+      <TickerFixModal v-if="fixOpen" @close="fixOpen = false" />
 
       <InvestmentFormModal
         v-if="editingId"

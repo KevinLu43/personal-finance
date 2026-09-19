@@ -187,6 +187,27 @@ async function repayLoan(accountId, { date, amount, fromAccountId }) {
   if (Models.accountBalance(loan, state.transactions) <= 0) await releaseLoanPledges(accountId, date);
 }
 
+// Rewrites a ticker on every trade and pledge of one market — for trades
+// recorded under a company name before codes were suggested. updatedAt is
+// left alone on purpose: holdingsSummary orders same-day trades by it, so
+// bumping it would silently reshuffle a buy and a sell dated the same day.
+async function renameTicker(market, fromTicker, toTicker) {
+  for (let i = 0; i < state.investments.length; i++) {
+    const inv = state.investments[i];
+    if (inv.market !== market || inv.ticker !== fromTicker) continue;
+    const updated = { ...inv, ticker: toTicker };
+    await Db.put('investments', updated);
+    state.investments[i] = updated;
+  }
+  for (let i = 0; i < state.pledges.length; i++) {
+    const p = state.pledges[i];
+    if (p.market !== market || p.ticker !== fromTicker) continue;
+    const updated = { ...p, ticker: toTicker };
+    await Db.put('pledges', updated);
+    state.pledges[i] = updated;
+  }
+}
+
 // --- Pledges (shares locked as collateral against a loan) ---
 
 // What a holding account can still pledge: what it holds of that ticker
@@ -548,6 +569,7 @@ window.Store = {
   accruedInterest,
   extendLoan,
   repayLoan,
+  renameTicker,
   freeQuantityInAccount,
   addPledge,
   releasePledge,

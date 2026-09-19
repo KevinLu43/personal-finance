@@ -518,6 +518,21 @@ body {
 .list-row-main { flex: 1; min-width: 0; }
 .list-row-title { font-weight: 600; font-size: 14px; }
 .list-row-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* A one-line prompt above a view's content, with its action on the right. */
+.notice-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: #fdf3e0;
+  font-size: 13px;
+}
+.ticker-fix-row { margin-bottom: 14px; }
+.ticker-fix-row select, .ticker-fix-row input { margin-top: 4px; }
+
 /* Company name shown beside a ticker code, secondary to the code itself. */
 .ticker-name { margin-left: 6px; font-size: 12px; font-weight: 400; color: var(--muted); }
 .list-row-amount { font-weight: 700; white-space: nowrap; }

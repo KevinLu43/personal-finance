@@ -703,6 +703,28 @@ function newPledge(fields) {
   };
 }
 
+// Directory entries whose company name matches free text an operator once
+// typed into the 標的 field ("台積電", "Apple") — best first: exact name, then
+// names starting with it, names containing it, and finally names the text
+// itself contains. Used to offer a code for trades recorded before the field
+// had a directory behind it; the operator confirms, nothing is applied here.
+function suggestTickerCodes(directory, text) {
+  const q = String(text || '').trim().toLowerCase();
+  if (!q) return [];
+  const found = [];
+  for (const entry of directory) {
+    const name = entry.name.toLowerCase();
+    let rank;
+    if (name === q) rank = 0;
+    else if (name.startsWith(q)) rank = 1;
+    else if (q.length >= 2 && name.includes(q)) rank = 2;
+    else if (name.length >= 2 && q.includes(name)) rank = 3;
+    else continue;
+    found.push({ code: entry.code, name: entry.name, rank });
+  }
+  return found.sort((a, b) => a.rank - b.rank || a.name.length - b.name.length).slice(0, 6);
+}
+
 // Shares of one market+ticker currently held (moving-average pool, so a sell
 // only counts once the buys before it do), optionally narrowed to one
 // account, optionally ignoring one trade — the sell form passes the trade it
@@ -952,6 +974,7 @@ window.Models = {
   accountHoldingsCost,
   accruedInterest,
   newPledge,
+  suggestTickerCodes,
   heldQuantityOf,
   pledgedQuantityOf,
   isLiabilityKind,
