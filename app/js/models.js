@@ -36,7 +36,22 @@ const SEED_CATEGORIES = [
 
 // A new account's icon starting point, one per kind — the picker still
 // lets the operator choose anything else before saving.
-const DEFAULT_ACCOUNT_ICON = { cash: '💵', bank: '🏦', credit_card: '💳', brokerage: '📈' };
+const DEFAULT_ACCOUNT_ICON = { cash: '💵', bank: '🏦', credit_card: '💳', brokerage: '📈', loan: '💴' };
+
+// A credit card and a loan both store what is *owed*, so the same events move
+// them the opposite way from a cash-style account and they subtract from net
+// worth. One owner for "which kinds are debt" so the several places that flip
+// a sign or leave an account out of the asset total never drift apart.
+function isLiabilityKind(kind) {
+  return kind === 'credit_card' || kind === 'loan';
+}
+
+// Accounts that only ever appear in a transfer, never as the account of an
+// ordinary expense/income: a 證券交割 account settles trades through the 投資
+// form, a loan moves only by borrowing/repaying (a transfer).
+function isTransferOnlyKind(kind) {
+  return kind === 'brokerage' || kind === 'loan';
+}
 
 function accountIcon(account) {
   return account.icon || DEFAULT_ACCOUNT_ICON[account.kind] || '❔';
@@ -44,6 +59,7 @@ function accountIcon(account) {
 
 function newAccount(fields) {
   const isBrokerage = fields.kind === 'brokerage';
+  const isLoan = fields.kind === 'loan';
   return {
     id: uuid(),
     name: fields.name,
@@ -65,6 +81,15 @@ function newAccount(fields) {
     feeRate: isBrokerage ? Number(fields.feeRate) || 0 : null,
     stockTaxRate: isBrokerage ? Number(fields.stockTaxRate) || 0 : null,
     etfTaxRate: isBrokerage ? Number(fields.etfTaxRate) || 0 : null,
+    // A loan account is one borrowing: the current annual rate (a fraction,
+    // like the brokerage rates), the date interest is currently counted
+    // from, when it matures, and how many extensions have been used against
+    // the cap set up front. Interest is settled in one go on repay/extend.
+    loanRate: isLoan ? Number(fields.loanRate) || 0 : null,
+    loanInterestFrom: isLoan ? fields.loanInterestFrom || nowIso().slice(0, 10) : null,
+    loanMaturity: isLoan ? fields.loanMaturity || null : null,
+    loanExtensions: isLoan ? Number(fields.loanExtensions) || 0 : null,
+    loanMaxExtensions: isLoan ? Number(fields.loanMaxExtensions) || 0 : null,
     sortOrder: fields.sortOrder ?? 0,
     isArchived: false,
     isDefault: fields.isDefault ?? false,
@@ -190,7 +215,7 @@ function accountBalance(account, transactions, investments = []) {
       delta += inv.action === 'buy' ? -net : net;
     }
   }
-  return account.kind === 'credit_card' ? account.initialBalance - delta : account.initialBalance + delta;
+  return isLiabilityKind(account.kind) ? account.initialBalance - delta : account.initialBalance + delta;
 }
 
 // Shared by monthlySummary and yearlySummary: income/expense/net and a
@@ -626,6 +651,38 @@ function accountHoldingsCost(account, investments) {
     .reduce((sum, h) => sum + h.costBasis, 0);
 }
 
+function daysBetween(fromDate, toDate) {
+  const [fy, fm, fd] = fromDate.split('-').map(Number);
+  const [ty, tm, td] = toDate.split('-').map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+// Interest a loan account has accrued from its loanInterestFrom up to (not
+// including) asOfDate: outstanding balance x annual rate x days / 365,
+// summed over each stretch between changes to that balance. Every
+// borrow/repay is an ordinary transfer, so the balance at the start of a
+// stretch is just accountBalance over the transactions dated on or before
+// it — no separate principal field to keep in sync. Settled (and the
+// counting date reset) only when the operator repays or extends.
+function accruedInterest(account, transactions, asOfDate) {
+  if (account.kind !== 'loan' || !account.loanRate) return 0;
+  const from = account.loanInterestFrom;
+  if (!from || asOfDate <= from) return 0;
+  const related = transactions.filter(
+    (t) => !t.isDeleted && (t.accountId === account.id || t.toAccountId === account.id)
+  );
+  const changeDates = [...new Set(related.map((t) => t.date).filter((d) => d > from && d < asOfDate))].sort();
+  const bounds = [from, ...changeDates, asOfDate];
+  let total = 0;
+  for (let i = 0; i < bounds.length - 1; i++) {
+    // Models.*, not the bare name — store.js declares its own single-arg
+    // accountBalance that would clobber the global one (see netWorthAsOf).
+    const owed = Math.max(0, Models.accountBalance(account, related.filter((t) => t.date <= bounds[i]), []));
+    total += (owed * account.loanRate * daysBetween(bounds[i], bounds[i + 1])) / 365;
+  }
+  return Math.round(total);
+}
+
 // Net worth as of a cutoff date: the same accountBalance() math, just fed
 // transactions/investments pre-filtered to "on or before that date" instead
 // of the full history. Every account (including an archived one) is scored
@@ -644,7 +701,7 @@ function netWorthAsOf(accounts, transactions, investments, cutoffDate) {
     // window.Models before store.js ever runs.
     const balance = Models.accountBalance(a, scopedTx, scopedInv);
     // Same "debt reads negative" convention dashboard.js's displayBalance uses.
-    const signed = a.kind === 'credit_card' ? -balance : balance;
+    const signed = isLiabilityKind(a.kind) ? -balance : balance;
     return sum + signed + Models.accountHoldingsCost(a, scopedInv);
   }, 0);
 }
@@ -845,6 +902,9 @@ window.Models = {
   portfolioBreakdown,
   netWorthTrend,
   accountHoldingsCost,
+  accruedInterest,
+  isLiabilityKind,
+  isTransferOnlyKind,
   buildNetWorthChart,
   newRecurring,
   dueOccurrences,

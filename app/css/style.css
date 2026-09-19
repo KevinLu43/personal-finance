@@ -534,6 +534,8 @@ body {
   padding: 4px 8px;
   font-size: 12px;
 }
+.list-row-actions { flex-wrap: wrap; justify-content: flex-end; }
+.list-row-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
 .list-row-actions button.danger { color: var(--expense); border-color: var(--expense); }
 
 button.primary {

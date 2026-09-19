@@ -143,7 +143,7 @@ const TransactionFormModal = {
         { kind: 'bank', label: '銀行' },
         { kind: 'credit_card', label: '信用卡' },
       ];
-      if (this.form.type === 'transfer') kinds.push({ kind: 'brokerage', label: '證券交割' });
+      if (this.form.type === 'transfer') kinds.push({ kind: 'brokerage', label: '證券交割' }, { kind: 'loan', label: '借款' });
       return kinds
         .map(({ kind, label }) => ({ label, accounts: this.accounts.filter((a) => a.kind === kind) }))
         .filter((g) => g.accounts.length > 0);
@@ -155,8 +155,8 @@ const TransactionFormModal = {
     'form.type'(type) {
       if (type === 'transfer') return;
       const current = this.accounts.find((a) => a.id === this.form.accountId);
-      if (current && current.kind !== 'brokerage') return;
-      const bookable = this.accounts.filter((a) => a.kind !== 'brokerage');
+      if (current && !Models.isTransferOnlyKind(current.kind)) return;
+      const bookable = this.accounts.filter((a) => !Models.isTransferOnlyKind(a.kind));
       const fallback = bookable.find((a) => a.isDefault) || bookable[0];
       this.form.accountId = fallback ? fallback.id : '';
     },
@@ -179,10 +179,10 @@ const TransactionFormModal = {
         }
       }
       const today = new Date().toISOString().slice(0, 10);
-      // 記帳's own default, independent of a brokerage account's — this
-      // form never lists brokerage accounts (accountGroups below), so
+      // 記帳's own default, independent of a brokerage/loan account's — this
+      // form never lists brokerage or loan accounts (accountGroups below), so
       // picking one here would leave accountId pointing at nothing selectable.
-      const bookableAccounts = Store.activeAccounts().filter((a) => a.kind !== 'brokerage');
+      const bookableAccounts = Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
       const firstAccount = bookableAccounts.find((a) => a.isDefault) || bookableAccounts[0];
       return {
         date: this.defaultDate || today,

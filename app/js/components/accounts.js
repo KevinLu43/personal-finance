@@ -1,24 +1,42 @@
 const AccountRowItem = {
   props: ['account', 'listId', 'index', 'dragging'],
-  emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up'],
+  emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up', 'extend', 'repay'],
   computed: {
     isCredit() {
       return this.account.kind === 'credit_card';
     },
+    isLoan() {
+      return this.account.kind === 'loan';
+    },
     isBrokerage() {
       return this.account.kind === 'brokerage';
     },
-    // Store.accountBalance already returns a credit card's balance as what
-    // is owed (a positive figure). It displays as a negative number here —
-    // debt reads the same red/negative way an expense does everywhere else
-    // in the app, rather than looking like money the reader actually has.
+    // A credit card or loan's stored balance is what is owed (a positive
+    // figure). It displays as a negative number here — debt reads the same
+    // red/negative way an expense does everywhere else in the app, rather
+    // than looking like money the reader actually has.
+    isDebt() {
+      return Models.isLiabilityKind(this.account.kind);
+    },
     displayAmount() {
       const owed = Store.accountBalance(this.account);
-      const n = this.isCredit ? -owed : owed;
-      return n.toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+      const n = this.isDebt ? -owed : owed;
+      return (n === 0 ? 0 : n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
     },
     isNegative() {
-      return this.isCredit ? Store.accountBalance(this.account) > 0 : Store.accountBalance(this.account) < 0;
+      return this.isDebt ? Store.accountBalance(this.account) > 0 : Store.accountBalance(this.account) < 0;
+    },
+    loanRateDisplay() {
+      return ((this.account.loanRate || 0) * 100).toLocaleString('zh-TW', { maximumFractionDigits: 4 });
+    },
+    loanOverdue() {
+      return !!this.account.loanMaturity && this.account.loanMaturity < new Date().toISOString().slice(0, 10);
+    },
+    loanAccruedInterest() {
+      return Store.accruedInterest(this.account, new Date().toISOString().slice(0, 10)).toLocaleString('zh-TW');
+    },
+    canExtend() {
+      return this.account.loanExtensions < this.account.loanMaxExtensions;
     },
     creditLimitDisplay() {
       return Number(this.account.creditLimit || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
@@ -39,6 +57,7 @@ const AccountRowItem = {
         @pointercancel="$emit('handle-up', $event)"
       >⠿</span>
       <button
+        v-if="!isLoan"
         class="default-star" :class="{ active: account.isDefault }"
         :aria-label="account.isDefault ? '取消預設帳戶' : '設為預設帳戶'"
         @click.stop="$emit('toggle-default', account)"
@@ -52,9 +71,15 @@ const AccountRowItem = {
           <span v-if="isCredit"> · 額度 {{ creditLimitDisplay }}</span>
           <span v-if="isBrokerage"> · {{ account.market === 'TW' ? '台股' : '美股' }} · 手續費 {{ feeRateDisplay }}%</span>
         </div>
+        <div v-if="isLoan" class="list-row-sub">
+          年利率 {{ loanRateDisplay }}% · 到期 {{ account.loanMaturity || '未設定' }}<span v-if="loanOverdue" class="negative">(已到期)</span>
+          · 展延 {{ account.loanExtensions }}/{{ account.loanMaxExtensions }} · 應付利息 {{ loanAccruedInterest }}
+        </div>
       </div>
       <div class="list-row-amount" :class="{ negative: isNegative }">{{ displayAmount }}</div>
       <div class="list-row-actions">
+        <button v-if="isLoan" :disabled="!canExtend" @click="$emit('extend', account)">展延</button>
+        <button v-if="isLoan" @click="$emit('repay', account)">還款</button>
         <button @click="$emit('edit', account)">編輯</button>
         <button @click="$emit('toggle-archive', account)">{{ account.isArchived ? '取消封存' : '封存' }}</button>
         <button class="danger" @click="$emit('delete', account)">刪除</button>
@@ -64,10 +89,12 @@ const AccountRowItem = {
 };
 
 const AccountsView = {
-  components: { AccountRowItem, IconPickerField },
+  components: { AccountRowItem, IconPickerField, LoanExtendModal, LoanRepayModal },
   mixins: [DragSortMixin],
   data() {
     return {
+      extendingLoanId: null, // loan whose 展延 dialog is open
+      repayingLoanId: null, // loan whose 還款 dialog is open
       editingId: null, // null = form closed
       form: this.blankForm(),
       rateFieldsTouched: false, // once the operator edits a rate, market changes stop overwriting it
@@ -90,6 +117,9 @@ const AccountsView = {
     },
     brokerageAccounts() {
       return this.accounts.filter((a) => a.kind === 'brokerage');
+    },
+    loanAccounts() {
+      return this.accounts.filter((a) => a.kind === 'loan');
     },
   },
   watch: {
@@ -119,6 +149,7 @@ const AccountsView = {
       return {
         name: '', kind: 'cash', icon: Models.accountIcon({ kind: 'cash' }), color: '#adb5bd', currency: 'TWD', initialBalance: 0, creditLimit: 0,
         market: 'TW', feeRate: 0, stockTaxRate: 0, etfTaxRate: 0,
+        loanRate: 0, loanInterestFrom: new Date().toISOString().slice(0, 10), loanMaturity: '', loanMaxExtensions: 0,
       };
     },
     openNew(kind) {
@@ -151,6 +182,10 @@ const AccountsView = {
         feeRate: Math.round((account.feeRate || 0) * 1000000) / 10000,
         stockTaxRate: Math.round((account.stockTaxRate || 0) * 1000000) / 10000,
         etfTaxRate: Math.round((account.etfTaxRate || 0) * 1000000) / 10000,
+        loanRate: Math.round((account.loanRate || 0) * 1000000) / 10000,
+        loanInterestFrom: account.loanInterestFrom || new Date().toISOString().slice(0, 10),
+        loanMaturity: account.loanMaturity || '',
+        loanMaxExtensions: account.loanMaxExtensions || 0,
       };
     },
     cancel() {
@@ -170,6 +205,12 @@ const AccountsView = {
         feeRate: this.form.kind === 'brokerage' ? (Number(this.form.feeRate) || 0) / 100 : null,
         stockTaxRate: this.form.kind === 'brokerage' ? (Number(this.form.stockTaxRate) || 0) / 100 : null,
         etfTaxRate: this.form.kind === 'brokerage' ? (Number(this.form.etfTaxRate) || 0) / 100 : null,
+        // loanExtensions is deliberately not here: it starts at 0 in
+        // newAccount and only the 展延 action ever changes it.
+        loanRate: this.form.kind === 'loan' ? (Number(this.form.loanRate) || 0) / 100 : null,
+        loanInterestFrom: this.form.kind === 'loan' ? this.form.loanInterestFrom || null : null,
+        loanMaturity: this.form.kind === 'loan' ? this.form.loanMaturity || null : null,
+        loanMaxExtensions: this.form.kind === 'loan' ? Number(this.form.loanMaxExtensions) || 0 : null,
       };
       if (this.editingId === 'new') {
         await Store.addAccount(fields);
@@ -277,6 +318,19 @@ const AccountsView = {
         <div v-if="brokerageAccounts.length === 0" class="empty">還沒有證券交割帳戶</div>
       </section>
 
+      <section class="panel">
+        <div class="view-header"><h3>借款</h3><button class="primary" @click="openNew('loan')">+ 新增</button></div>
+        <p class="muted" style="margin: -4px 0 10px;">借出與還本金請用「轉帳」記,利息在展延或還款時一次結算</p>
+        <AccountRowItem
+          v-for="(a, i) in displayList('loan', loanAccounts)" :key="a.id"
+          :account="a" list-id="loan" :index="i" :dragging="dragId === a.id"
+          @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
+          @extend="extendingLoanId = $event.id" @repay="repayingLoanId = $event.id"
+          @handle-down="startDrag('loan', loanAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
+        />
+        <div v-if="loanAccounts.length === 0" class="empty">還沒有借款</div>
+      </section>
+
       <section class="panel span-2">
         <h3>資料備份</h3>
         <p class="muted" style="margin: -4px 0 10px;">按下按鈕後請選擇要匯出到的路徑</p>
@@ -300,6 +354,7 @@ const AccountsView = {
                 <option value="bank">銀行</option>
                 <option value="credit_card">信用卡</option>
                 <option value="brokerage">證券交割</option>
+                <option value="loan">借款</option>
               </select>
             </label>
             <label v-if="form.kind === 'brokerage'">市場
@@ -309,12 +364,20 @@ const AccountsView = {
               </select>
             </label>
             <label v-else>幣別 <input v-model="form.currency" /></label>
-            <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : '起始餘額' }}
+            <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : form.kind === 'loan' ? '目前借款餘額(起始)' : '起始餘額' }}
               <input type="number" v-model="form.initialBalance" />
             </label>
             <label v-if="form.kind === 'credit_card'">信用額度
               <input type="number" v-model="form.creditLimit" />
             </label>
+            <template v-if="form.kind === 'loan'">
+              <label>年利率(%) <input type="number" step="0.0001" min="0" v-model.number="form.loanRate" /></label>
+              <label>計息起始日 <input type="date" v-model="form.loanInterestFrom" />
+                <span class="field-hint">利息從這天起算;之後借出的金額請記成「借款 → 銀行」的轉帳</span>
+              </label>
+              <label>到期日 <input type="date" v-model="form.loanMaturity" /></label>
+              <label>最多可展延次數 <input type="number" min="0" step="1" v-model.number="form.loanMaxExtensions" /></label>
+            </template>
             <template v-if="form.kind === 'brokerage'">
               <label>手續費率(%) <input type="number" step="0.0001" v-model.number="form.feeRate" @input="rateFieldsTouched = true" />
                 <span class="field-hint">買賣都適用,小數表示,例如 0.1425 代表 0.1425%</span>
@@ -331,6 +394,9 @@ const AccountsView = {
           </div>
         </div>
       </div>
+
+      <LoanExtendModal v-if="extendingLoanId" :loan-id="extendingLoanId" @close="extendingLoanId = null" />
+      <LoanRepayModal v-if="repayingLoanId" :loan-id="repayingLoanId" @close="repayingLoanId = null" />
     </div>
   `,
 };

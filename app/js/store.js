@@ -99,7 +99,7 @@ async function setAccountArchived(id, isArchived) {
 // default an operator already set for everyday spending, and vice versa.
 async function setDefaultAccount(id) {
   const target = state.accounts.find((a) => a.id === id);
-  if (!target) return;
+  if (!target || target.kind === 'loan') return; // a loan is never a default account
   const isBrokerage = target.kind === 'brokerage';
   await Promise.all(
     state.accounts
@@ -117,6 +117,62 @@ async function deleteAccount(id) {
   await Db.remove('accounts', id);
   const idx = state.accounts.findIndex((a) => a.id === id);
   if (idx !== -1) state.accounts.splice(idx, 1);
+}
+
+// --- Loans (質押借款) ---
+// Borrowing and repaying principal are ordinary transfers to/from the loan
+// account; only interest needs anything special, and it is settled in one
+// go — as an expense on the account chosen at that moment — when the loan is
+// repaid or extended.
+
+async function ensureInterestCategory() {
+  const existing = state.categories.find((c) => c.kind === 'expense' && c.name === '利息');
+  if (existing) return existing;
+  return addCategory({ name: '利息', kind: 'expense', icon: '💸', color: '#9c6644' });
+}
+
+async function settleLoanInterest(loan, date, payFromAccountId) {
+  const interest = Models.accruedInterest(loan, state.transactions, date);
+  if (interest <= 0) return;
+  const category = await ensureInterestCategory();
+  await addTransaction({
+    date,
+    type: 'expense',
+    amount: interest,
+    accountId: payFromAccountId,
+    categoryId: category.id,
+    note: `${loan.name} 利息 ${loan.loanInterestFrom} ~ ${date}`,
+  });
+}
+
+// Extending settles the interest owed at the old rate, then restarts
+// counting from the extension date at the newly entered rate — a rate
+// change never has to be applied retroactively.
+async function extendLoan(accountId, { date, newMaturity, newRate, payFromAccountId }) {
+  const loan = state.accounts.find((a) => a.id === accountId);
+  if (!loan || loan.kind !== 'loan' || loan.loanExtensions >= loan.loanMaxExtensions) return;
+  await settleLoanInterest(loan, date, payFromAccountId);
+  await updateAccount(accountId, {
+    loanRate: newRate,
+    loanMaturity: newMaturity,
+    loanExtensions: loan.loanExtensions + 1,
+    loanInterestFrom: date,
+  });
+}
+
+async function repayLoan(accountId, { date, amount, fromAccountId }) {
+  const loan = state.accounts.find((a) => a.id === accountId);
+  if (!loan || loan.kind !== 'loan') return;
+  await settleLoanInterest(loan, date, fromAccountId);
+  await addTransaction({
+    date,
+    type: 'transfer',
+    amount,
+    accountId: fromAccountId,
+    toAccountId: accountId,
+    note: `${loan.name} 還款`,
+  });
+  await updateAccount(accountId, { loanInterestFrom: date });
 }
 
 // --- Categories ---
@@ -365,6 +421,10 @@ function accountBalance(account) {
   return Models.accountBalance(account, state.transactions, state.investments);
 }
 
+function accruedInterest(account, asOfDate) {
+  return Models.accruedInterest(account, state.transactions, asOfDate);
+}
+
 function accountHoldingsCost(account) {
   return Models.accountHoldingsCost(account, state.investments);
 }
@@ -423,6 +483,9 @@ window.Store = {
   activeCategories,
   accountBalance,
   accountHoldingsCost,
+  accruedInterest,
+  extendLoan,
+  repayLoan,
   monthlySummary,
   yearlySummary,
   monthlyTrend,

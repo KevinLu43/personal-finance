@@ -207,7 +207,7 @@ const DashboardView = {
         // into netWorth/assetTotal/percentages; cash and holdingsCost are
         // kept alongside so the row can show the split.
         const holdingsCost = Store.accountHoldingsCost(a);
-        const displayBalance = (a.kind === 'credit_card' ? -balance : balance) + holdingsCost;
+        const displayBalance = (Models.isLiabilityKind(a.kind) ? -balance : balance) + holdingsCost;
         return {
           account: a,
           balance,
@@ -227,7 +227,7 @@ const DashboardView = {
     // never gets a percentage of its own.
     assetTotal() {
       return this.accountsWithBalance
-        .filter((r) => r.account.kind !== 'credit_card')
+        .filter((r) => !Models.isLiabilityKind(r.account.kind))
         .reduce((sum, r) => sum + r.displayBalance, 0);
     },
     // Grouped the same way the Accounts tab and the transaction form's
@@ -239,6 +239,7 @@ const DashboardView = {
         { kind: 'bank', label: '銀行' },
         { kind: 'credit_card', label: '信用卡' },
         { kind: 'brokerage', label: '證券交割' },
+        { kind: 'loan', label: '借款' },
       ];
       return kinds
         .map(({ kind, label }) => {
@@ -473,7 +474,7 @@ const DashboardView = {
               <span class="icon-badge-sm" :style="{ background: (row.account.color || '#adb5bd') + '30' }">{{ row.icon }}</span>
               <span class="bar-name">{{ row.account.name }}</span>
               <span class="bar-amount" :class="{ negative: row.displayBalance < 0 }">
-                {{ fmt(row.displayBalance) }}<template v-if="row.account.kind !== 'credit_card'"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
+                {{ fmt(row.displayBalance) }}<template v-if="!['credit_card', 'loan'].includes(row.account.kind)"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
               </span>
             </div>
             <div v-if="row.account.kind === 'brokerage'" class="account-split">
