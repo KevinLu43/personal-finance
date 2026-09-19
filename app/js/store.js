@@ -365,6 +365,10 @@ function accountBalance(account) {
   return Models.accountBalance(account, state.transactions, state.investments);
 }
 
+function accountHoldingsCost(account) {
+  return Models.accountHoldingsCost(account, state.investments);
+}
+
 function monthlySummary(yearMonth) {
   return Models.monthlySummary(state.transactions, state.categories, yearMonth);
 }
@@ -418,6 +422,7 @@ window.Store = {
   activeAccounts,
   activeCategories,
   accountBalance,
+  accountHoldingsCost,
   monthlySummary,
   yearlySummary,
   monthlyTrend,

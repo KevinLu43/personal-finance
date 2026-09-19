@@ -611,6 +611,21 @@ function dailyTotals(transactions, yearMonth) {
   return byDay;
 }
 
+// Cost basis of the shares one 證券交割 account currently holds — its own
+// trades only, run through the same moving-average-cost holdingsSummary as
+// the 投資總覽 screen. Valued at cost rather than market price because this
+// app has no live quote source; it is what keeps a buy from looking like a
+// loss (cash down by X, holdings up by X) until a market value exists.
+// A position that went net-negative (sold here what was bought through
+// another account) counts as 0 rather than a negative asset.
+function accountHoldingsCost(account, investments) {
+  if (account.kind !== 'brokerage') return 0;
+  const own = investments.filter((i) => i.accountId === account.id);
+  return holdingsSummary(own)
+    .filter((h) => h.quantity > 0)
+    .reduce((sum, h) => sum + h.costBasis, 0);
+}
+
 // Net worth as of a cutoff date: the same accountBalance() math, just fed
 // transactions/investments pre-filtered to "on or before that date" instead
 // of the full history. Every account (including an archived one) is scored
@@ -629,7 +644,8 @@ function netWorthAsOf(accounts, transactions, investments, cutoffDate) {
     // window.Models before store.js ever runs.
     const balance = Models.accountBalance(a, scopedTx, scopedInv);
     // Same "debt reads negative" convention dashboard.js's displayBalance uses.
-    return sum + (a.kind === 'credit_card' ? -balance : balance);
+    const signed = a.kind === 'credit_card' ? -balance : balance;
+    return sum + signed + Models.accountHoldingsCost(a, scopedInv);
   }, 0);
 }
 
@@ -828,6 +844,7 @@ window.Models = {
   evaluateExpression,
   portfolioBreakdown,
   netWorthTrend,
+  accountHoldingsCost,
   buildNetWorthChart,
   newRecurring,
   dueOccurrences,

@@ -188,6 +188,17 @@ body {
 
 .bar-row.clickable { cursor: pointer; }
 
+/* Cash / holdings split under a 證券交割 row in 資產總覽 — indented past the
+   icon so it reads as belonging to the row above it. */
+.account-split {
+  display: flex;
+  gap: 12px;
+  padding: 0 0 6px 32px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
 .expand-arrow {
   display: inline-block;
   color: var(--muted);

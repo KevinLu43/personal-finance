@@ -202,8 +202,20 @@ const DashboardView = {
         // A credit card reduces net worth, so it displays (and sums) as a
         // negative figure — the same red/negative convention an expense
         // uses everywhere else, rather than reading like money on hand.
-        const displayBalance = a.kind === 'credit_card' ? -balance : balance;
-        return { account: a, balance, displayBalance, icon: Models.accountIcon(a) };
+        // A 證券交割 account's worth is its cash plus what it holds, valued at
+        // cost (no live quotes) — displayBalance is that total, so it flows
+        // into netWorth/assetTotal/percentages; cash and holdingsCost are
+        // kept alongside so the row can show the split.
+        const holdingsCost = Store.accountHoldingsCost(a);
+        const displayBalance = (a.kind === 'credit_card' ? -balance : balance) + holdingsCost;
+        return {
+          account: a,
+          balance,
+          cash: a.kind === 'brokerage' ? balance : null,
+          holdingsCost,
+          displayBalance,
+          icon: Models.accountIcon(a),
+        };
       });
     },
     netWorth() {
@@ -456,12 +468,18 @@ const DashboardView = {
             <span>{{ g.label }}</span>
             <span :class="{ negative: g.subtotal < 0 }">{{ fmt(g.subtotal) }}</span>
           </div>
-          <div v-for="row in g.rows" :key="row.account.id" class="bar-row">
-            <span class="icon-badge-sm" :style="{ background: (row.account.color || '#adb5bd') + '30' }">{{ row.icon }}</span>
-            <span class="bar-name">{{ row.account.name }}</span>
-            <span class="bar-amount" :class="{ negative: row.displayBalance < 0 }">
-              {{ fmt(row.displayBalance) }}<template v-if="row.account.kind !== 'credit_card'"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
-            </span>
+          <div v-for="row in g.rows" :key="row.account.id">
+            <div class="bar-row">
+              <span class="icon-badge-sm" :style="{ background: (row.account.color || '#adb5bd') + '30' }">{{ row.icon }}</span>
+              <span class="bar-name">{{ row.account.name }}</span>
+              <span class="bar-amount" :class="{ negative: row.displayBalance < 0 }">
+                {{ fmt(row.displayBalance) }}<template v-if="row.account.kind !== 'credit_card'"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
+              </span>
+            </div>
+            <div v-if="row.account.kind === 'brokerage'" class="account-split">
+              <span>現金 {{ fmt(row.cash) }}</span>
+              <span>持股成本 {{ fmt(row.holdingsCost) }}</span>
+            </div>
           </div>
         </div>
       </section>
