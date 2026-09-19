@@ -205,6 +205,12 @@ const InvestmentOverviewView = {
     fmtPrice(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
     },
+    // 持股比例's legend: a Taiwan holding reads as its company name (a bare
+    // four-digit code says nothing at a glance), falling back to the code when
+    // the directory has none; US tickers are already what people recognise.
+    legendName(ticker) {
+      return this.selectedMarket === 'TW' ? window.tickerName('TW', ticker) || ticker : ticker;
+    },
     nameOf(h) {
       return window.tickerName(h.market, h.ticker);
     },
@@ -281,7 +287,7 @@ const InvestmentOverviewView = {
             </svg>
             <div v-for="row in portfolioBreakdown" :key="row.category.name" class="bar-row">
               <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-              <span class="bar-name">{{ row.category.name }}</span>
+              <span class="bar-name">{{ legendName(row.category.name) }}</span>
               <span class="bar-amount">{{ fmtPercent(row.amount) }}</span>
             </div>
           </section>
