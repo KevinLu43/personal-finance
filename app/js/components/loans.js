@@ -238,6 +238,9 @@ const LoanPledgeModal = {
     },
   },
   methods: {
+    nameOf(market, ticker) {
+      return window.tickerName(market, ticker);
+    },
     async add() {
       if (!this.valid) return;
       await Store.addPledge({
@@ -263,7 +266,7 @@ const LoanPledgeModal = {
           <div v-if="activePledges.length === 0" class="empty">還沒有質押的股票</div>
           <div v-for="p in activePledges" :key="p.id" class="list-row">
             <div class="list-row-main">
-              <div class="list-row-title">{{ p.ticker }} × {{ p.quantity }}</div>
+              <div class="list-row-title">{{ p.ticker }}<span v-if="nameOf(p.market, p.ticker)" class="ticker-name">{{ nameOf(p.market, p.ticker) }}</span> × {{ p.quantity }}</div>
               <div class="list-row-sub">{{ p.market === 'TW' ? '台股' : '美股' }} · {{ p.accountName }} · {{ p.date }}</div>
             </div>
             <div class="list-row-actions"><button @click="release(p)">解除</button></div>
@@ -280,7 +283,7 @@ const LoanPledgeModal = {
             <label>標的
               <select v-model="form.ticker">
                 <option value="">請選擇</option>
-                <option v-for="o in pledgeableTickers" :key="o.ticker" :value="o.ticker">{{ o.ticker }}(可質押 {{ o.free }} 股)</option>
+                <option v-for="o in pledgeableTickers" :key="o.ticker" :value="o.ticker">{{ o.ticker }} {{ nameOf(account.market, o.ticker) }}(可質押 {{ o.free }} 股)</option>
               </select>
               <span v-if="pledgeableTickers.length === 0" class="field-hint">這個帳戶沒有可以質押的持股</span>
             </label>

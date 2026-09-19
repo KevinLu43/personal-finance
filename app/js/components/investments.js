@@ -7,6 +7,9 @@ const InvestmentRowItem = {
     net() {
       return Models.investmentAmounts(this.investment).net;
     },
+    companyName() {
+      return window.tickerName(this.investment.market, this.investment.ticker);
+    },
     accountName() {
       const a = Store.state.accounts.find((x) => x.id === this.investment.accountId);
       return a ? a.name : '(已刪除帳戶)';
@@ -22,6 +25,7 @@ const InvestmentRowItem = {
       <div class="list-row-main">
         <span class="bar-icon">{{ investment.action === 'buy' ? '🟢' : '🔴' }}</span>
         <span class="list-row-title">{{ investment.ticker }}</span>
+        <span v-if="companyName" class="ticker-name">{{ companyName }}</span>
         <div class="list-row-sub">
           {{ investment.action === 'buy' ? '買入' : '賣出' }} · {{ fmt(investment.price) }} × {{ investment.quantity }} · {{ accountName }}
         </div>
@@ -58,6 +62,9 @@ const InvestmentTickerGroupList = {
     isGroupExpanded(ticker) {
       return this.expandedGroups.has(ticker);
     },
+    nameOf(group) {
+      return window.tickerName(group.items[0].market, group.ticker);
+    },
   },
   template: `
     <template v-for="g in groups" :key="g.ticker">
@@ -66,7 +73,7 @@ const InvestmentTickerGroupList = {
         <div class="list-row clickable" @click="toggleGroupExpand(g.ticker)">
           <span class="icon-badge">📈</span>
           <div class="list-row-main">
-            <div class="list-row-title">{{ g.ticker }}</div>
+            <div class="list-row-title">{{ g.ticker }}<span v-if="nameOf(g)" class="ticker-name">{{ nameOf(g) }}</span></div>
             <div class="list-row-sub">{{ g.items.length }} 筆</div>
           </div>
           <span class="expand-arrow" :class="{ open: isGroupExpanded(g.ticker) }">›</span>
@@ -177,6 +184,9 @@ const InvestmentFormModal = {
     },
   },
   methods: {
+    tickerNameFor(ticker) {
+      return this.selectedAccount ? window.tickerName(this.selectedAccount.market, ticker) : '';
+    },
     recalc() {
       const price = Number(this.form.price) || 0;
       const quantity = Number(this.form.quantity) || 0;
@@ -299,7 +309,7 @@ const InvestmentFormModal = {
               <template v-if="form.action === 'sell'">
                 <select v-if="sellTickerOptions.length" v-model="form.ticker">
                   <option v-for="o in sellTickerOptions" :key="o.ticker" :value="o.ticker">
-                    {{ o.ticker }}{{ o.quantity != null ? '(可賣 ' + o.quantity + ')' : '' }}
+                    {{ o.ticker }}{{ tickerNameFor(o.ticker) ? ' ' + tickerNameFor(o.ticker) : '' }}{{ o.quantity != null ? '(可賣 ' + o.quantity + ')' : '' }}
                   </option>
                 </select>
                 <div v-else class="field-hint">這個帳戶目前沒有持股可以賣出</div>

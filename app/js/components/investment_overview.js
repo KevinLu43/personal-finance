@@ -104,6 +104,9 @@ const InvestmentOverviewView = {
     fmtPrice(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
     },
+    nameOf(h) {
+      return window.tickerName(h.market, h.ticker);
+    },
     pledgedFor(h) {
       return Store.pledgedQuantity(h.market, h.ticker);
     },
@@ -186,7 +189,7 @@ const InvestmentOverviewView = {
             </div>
             <div v-for="h in currentHoldings" :key="h.ticker" class="list-row">
               <div class="list-row-main">
-                <div class="list-row-title">{{ h.ticker }}</div>
+                <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span></div>
                 <div class="list-row-sub">
                   {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + fmtPrice(h.avgCost)) : '已出清' }}
                   <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
