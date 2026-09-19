@@ -124,11 +124,32 @@ const InvestmentFormModal = {
       return Models.holdingsSummary(Store.state.investments)
         .filter((h) => h.market === this.selectedAccount.market && h.quantity > 0);
     },
+    // Shares of the chosen ticker that may actually be sold: what's held in
+    // this market less anything pledged as loan collateral. Counted without
+    // the trade being edited, so it doesn't block its own quantity.
+    sellable() {
+      if (!this.selectedAccount || !this.form.ticker) return 0;
+      return Store.sellableQuantity(this.selectedAccount.market, this.form.ticker.trim().toUpperCase(), this.isNew ? null : this.editingId);
+    },
+    pledgedForTicker() {
+      if (!this.selectedAccount || !this.form.ticker) return 0;
+      return Store.pledgedQuantity(this.selectedAccount.market, this.form.ticker.trim().toUpperCase());
+    },
+    // Only a sell is limited; null means nothing to complain about.
+    sellError() {
+      if (this.form.action !== 'sell' || !this.form.ticker || !Number(this.form.quantity)) return null;
+      if (Number(this.form.quantity) <= this.sellable + 1e-9) return null;
+      return this.pledgedForTicker > 0
+        ? `最多可賣 ${this.sellable} 股(已扣除質押中的 ${this.pledgedForTicker} 股)`
+        : `最多可賣 ${this.sellable} 股`;
+    },
     // The trade being edited may hold a ticker no longer (or not yet, mid
     // pick) in heldTickers — keep it selectable so opening an old sell to
     // fix a typo doesn't silently blank or swap its ticker out from under it.
     sellTickerOptions() {
-      const list = this.heldTickers.map((h) => ({ ticker: h.ticker, quantity: h.quantity }));
+      const list = this.heldTickers
+        .map((h) => ({ ticker: h.ticker, quantity: Store.sellableQuantity(h.market, h.ticker, this.isNew ? null : this.editingId) }))
+        .filter((o) => o.quantity > 0);
       if (this.form.ticker && !list.some((o) => o.ticker === this.form.ticker)) {
         list.unshift({ ticker: this.form.ticker, quantity: null });
       }
@@ -208,6 +229,7 @@ const InvestmentFormModal = {
       const price = Number(this.form.price);
       const quantity = Number(this.form.quantity);
       if (!this.form.accountId || !this.form.ticker.trim() || !price || price <= 0 || !quantity || quantity <= 0) return null;
+      if (this.sellError) return null;
       return {
         date: this.form.date,
         accountId: this.form.accountId,
@@ -277,7 +299,7 @@ const InvestmentFormModal = {
               <template v-if="form.action === 'sell'">
                 <select v-if="sellTickerOptions.length" v-model="form.ticker">
                   <option v-for="o in sellTickerOptions" :key="o.ticker" :value="o.ticker">
-                    {{ o.ticker }}{{ o.quantity != null ? '(持有 ' + o.quantity + ')' : '' }}
+                    {{ o.ticker }}{{ o.quantity != null ? '(可賣 ' + o.quantity + ')' : '' }}
                   </option>
                 </select>
                 <div v-else class="field-hint">這個帳戶目前沒有持股可以賣出</div>
@@ -285,7 +307,9 @@ const InvestmentFormModal = {
               <TickerPickerField v-else v-model="form.ticker" :market="selectedAccount.market" />
             </label>
             <label>價格 <input type="number" v-model="form.price" min="0" step="0.01" /></label>
-            <label>數量 <input type="number" v-model="form.quantity" min="0" step="0.0001" /></label>
+            <label>數量 <input type="number" v-model="form.quantity" min="0" step="0.0001" />
+              <span v-if="sellError" class="field-hint negative">{{ sellError }}</span>
+            </label>
             <label>手續費 <input type="number" v-model="form.fee" min="0" @input="feeTouched = true" />
               <span class="field-hint" v-if="selectedAccount">
                 依「{{ selectedAccount.name }}」設定的 {{ (selectedAccount.feeRate * 100).toLocaleString('zh-TW', { maximumFractionDigits: 4 }) }}% 自動試算,可自行調整

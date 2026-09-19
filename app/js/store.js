@@ -15,10 +15,11 @@ const state = reactive({
   transactionLabels: [],
   investments: [],
   recurringTransactions: [],
+  pledges: [],
 });
 
 async function loadAll() {
-  const [accounts, categories, labels, transactions, transactionLabels, investments, recurringTransactions] = await Promise.all([
+  const [accounts, categories, labels, transactions, transactionLabels, investments, recurringTransactions, pledges] = await Promise.all([
     Db.getAll('accounts'),
     Db.getAll('categories'),
     Db.getAll('labels'),
@@ -26,6 +27,7 @@ async function loadAll() {
     Db.getAll('transactionLabels'),
     Db.getAll('investments'),
     Db.getAll('recurringTransactions'),
+    Db.getAll('pledges'),
   ]);
   state.accounts = accounts;
   state.categories = categories;
@@ -34,6 +36,7 @@ async function loadAll() {
   state.transactionLabels = transactionLabels;
   state.investments = investments;
   state.recurringTransactions = recurringTransactions;
+  state.pledges = pledges;
   await migrateLabelSortOrder();
 }
 
@@ -114,6 +117,13 @@ async function setDefaultAccount(id) {
 // referenced it keep their accountId as-is and fall back to "(已刪除帳戶)"
 // wherever that's rendered, rather than being deleted or rewritten.
 async function deleteAccount(id) {
+  const doomed = state.accounts.find((a) => a.id === id);
+  // A pledge with no loan behind it locks shares for nothing, so it goes
+  // with the loan (unlike transactions, which keep a dangling accountId).
+  if (doomed && doomed.kind === 'loan') {
+    for (const p of state.pledges.filter((x) => x.loanAccountId === id)) await Db.remove('pledges', p.id);
+    state.pledges = state.pledges.filter((x) => x.loanAccountId !== id);
+  }
   await Db.remove('accounts', id);
   const idx = state.accounts.findIndex((a) => a.id === id);
   if (idx !== -1) state.accounts.splice(idx, 1);
@@ -173,6 +183,58 @@ async function repayLoan(accountId, { date, amount, fromAccountId }) {
     note: `${loan.name} 還款`,
   });
   await updateAccount(accountId, { loanInterestFrom: date });
+  // Nothing left owed means nothing left to secure.
+  if (Models.accountBalance(loan, state.transactions) <= 0) await releaseLoanPledges(accountId, date);
+}
+
+// --- Pledges (shares locked as collateral against a loan) ---
+
+// What a holding account can still pledge: what it holds of that ticker
+// minus what it already has pledged (to any loan).
+function freeQuantityInAccount(accountId, market, ticker) {
+  return (
+    Models.heldQuantityOf(state.investments, { market, ticker, accountId }) -
+    Models.pledgedQuantityOf(state.pledges, { market, ticker, accountId })
+  );
+}
+
+async function addPledge(fields) {
+  const account = state.accounts.find((a) => a.id === fields.accountId);
+  if (!account || account.kind !== 'brokerage') return null;
+  const market = account.market;
+  if (Number(fields.quantity) <= 0 || Number(fields.quantity) > freeQuantityInAccount(account.id, market, fields.ticker) + 1e-9) return null;
+  const pledge = Models.newPledge({ ...fields, market });
+  await Db.put('pledges', pledge);
+  state.pledges.push(pledge);
+  return pledge;
+}
+
+async function releasePledge(id, date) {
+  const idx = state.pledges.findIndex((p) => p.id === id);
+  if (idx === -1) return;
+  const updated = { ...state.pledges[idx], isReleased: true, releasedDate: date || Models.nowIso().slice(0, 10), updatedAt: Models.nowIso() };
+  await Db.put('pledges', updated);
+  state.pledges[idx] = updated;
+}
+
+async function releaseLoanPledges(loanAccountId, date) {
+  for (const p of state.pledges.filter((x) => x.loanAccountId === loanAccountId && !x.isReleased)) {
+    await releasePledge(p.id, date);
+  }
+}
+
+// What the sell form may sell: everything held in the market for that
+// ticker, less what any active pledge has locked. excludeInvestmentId is
+// the trade being edited, so its own quantity isn't counted against itself.
+function sellableQuantity(market, ticker, excludeInvestmentId) {
+  return (
+    Models.heldQuantityOf(state.investments, { market, ticker, excludeId: excludeInvestmentId }) -
+    Models.pledgedQuantityOf(state.pledges, { market, ticker })
+  );
+}
+
+function pledgedQuantity(market, ticker) {
+  return Models.pledgedQuantityOf(state.pledges, { market, ticker });
 }
 
 // --- Categories ---
@@ -486,6 +548,11 @@ window.Store = {
   accruedInterest,
   extendLoan,
   repayLoan,
+  freeQuantityInAccount,
+  addPledge,
+  releasePledge,
+  sellableQuantity,
+  pledgedQuantity,
   monthlySummary,
   yearlySummary,
   monthlyTrend,

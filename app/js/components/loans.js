@@ -177,3 +177,124 @@ const LoanRepayModal = {
     </div>
   `,
 };
+
+// Shares locked as collateral for one loan. A pledge only takes quantity out
+// of what the sell form will allow — no price, since there are no live
+// quotes — and is released by hand, or automatically once the loan is repaid
+// in full (Store.repayLoan).
+const LoanPledgeModal = {
+  props: { loanId: { type: String, required: true } },
+  emits: ['close'],
+  data() {
+    const brokerages = Store.state.accounts.filter((a) => a.kind === 'brokerage' && !a.isArchived);
+    return {
+      form: { accountId: brokerages[0] ? brokerages[0].id : '', ticker: '', quantity: '', date: loanToday() },
+    };
+  },
+  computed: {
+    loan() {
+      return Store.state.accounts.find((a) => a.id === this.loanId);
+    },
+    brokerageAccounts() {
+      return Store.state.accounts.filter((a) => a.kind === 'brokerage' && !a.isArchived);
+    },
+    account() {
+      return Store.state.accounts.find((a) => a.id === this.form.accountId) || null;
+    },
+    // Tickers the chosen account still has unpledged shares of.
+    pledgeableTickers() {
+      if (!this.account) return [];
+      const own = Store.state.investments.filter((i) => i.accountId === this.account.id);
+      return Models.holdingsSummary(own)
+        .filter((h) => h.quantity > 0)
+        .map((h) => ({ ticker: h.ticker, free: Store.freeQuantityInAccount(this.account.id, this.account.market, h.ticker) }))
+        .filter((o) => o.free > 0);
+    },
+    free() {
+      const t = this.pledgeableTickers.find((o) => o.ticker === this.form.ticker);
+      return t ? t.free : 0;
+    },
+    activePledges() {
+      return Store.state.pledges
+        .filter((p) => p.loanAccountId === this.loanId && !p.isReleased)
+        .map((p) => {
+          const acct = Store.state.accounts.find((a) => a.id === p.accountId);
+          return { ...p, accountName: acct ? acct.name : '(已刪除帳戶)' };
+        });
+    },
+    valid() {
+      return !!this.account && !!this.form.ticker && Number(this.form.quantity) > 0 && Number(this.form.quantity) <= this.free + 1e-9;
+    },
+  },
+  watch: {
+    // Picking another account (or ticker) resets the quantity to everything
+    // still free, the common "pledge the lot" case.
+    'form.accountId'() {
+      this.form.ticker = '';
+      this.form.quantity = '';
+    },
+    'form.ticker'() {
+      this.form.quantity = this.free || '';
+    },
+  },
+  methods: {
+    async add() {
+      if (!this.valid) return;
+      await Store.addPledge({
+        loanAccountId: this.loanId,
+        accountId: this.form.accountId,
+        ticker: this.form.ticker,
+        quantity: Number(this.form.quantity),
+        date: this.form.date,
+      });
+      this.form.ticker = '';
+      this.form.quantity = '';
+    },
+    async release(p) {
+      if (!confirm(`解除 ${p.ticker} ${p.quantity} 股的質押？`)) return;
+      await Store.releasePledge(p.id);
+    },
+  },
+  template: `
+    <div class="modal-backdrop" @click.self="$emit('close')">
+      <div class="modal" v-if="loan">
+        <h3>「{{ loan.name }}」的質押股票</h3>
+        <div class="modal-body">
+          <div v-if="activePledges.length === 0" class="empty">還沒有質押的股票</div>
+          <div v-for="p in activePledges" :key="p.id" class="list-row">
+            <div class="list-row-main">
+              <div class="list-row-title">{{ p.ticker }} × {{ p.quantity }}</div>
+              <div class="list-row-sub">{{ p.market === 'TW' ? '台股' : '美股' }} · {{ p.accountName }} · {{ p.date }}</div>
+            </div>
+            <div class="list-row-actions"><button @click="release(p)">解除</button></div>
+          </div>
+
+          <h4 style="margin: 14px 0 6px; font-size: 13px;">新增質押</h4>
+          <div v-if="brokerageAccounts.length === 0" class="empty">還沒有證券交割帳戶</div>
+          <template v-else>
+            <label>持股所在帳戶
+              <select v-model="form.accountId">
+                <option v-for="a in brokerageAccounts" :key="a.id" :value="a.id">{{ a.name }}({{ a.market === 'TW' ? '台股' : '美股' }})</option>
+              </select>
+            </label>
+            <label>標的
+              <select v-model="form.ticker">
+                <option value="">請選擇</option>
+                <option v-for="o in pledgeableTickers" :key="o.ticker" :value="o.ticker">{{ o.ticker }}(可質押 {{ o.free }} 股)</option>
+              </select>
+              <span v-if="pledgeableTickers.length === 0" class="field-hint">這個帳戶沒有可以質押的持股</span>
+            </label>
+            <label>質押股數 <input type="number" min="0" step="0.0001" v-model="form.quantity" />
+              <span v-if="form.ticker && Number(form.quantity) > free" class="field-hint negative">最多可質押 {{ free }} 股</span>
+            </label>
+            <label>質押日期 <input type="date" v-model="form.date" /></label>
+          </template>
+        </div>
+        <div class="modal-actions">
+          <button @click="$emit('close')">關閉</button>
+          <button class="primary" :disabled="!valid" @click="add">加入質押</button>
+        </div>
+      </div>
+    </div>
+  `,
+};

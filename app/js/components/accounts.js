@@ -1,6 +1,6 @@
 const AccountRowItem = {
   props: ['account', 'listId', 'index', 'dragging'],
-  emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up', 'extend', 'repay'],
+  emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up', 'extend', 'repay', 'pledge'],
   computed: {
     isCredit() {
       return this.account.kind === 'credit_card';
@@ -34,6 +34,13 @@ const AccountRowItem = {
     },
     loanAccruedInterest() {
       return Store.accruedInterest(this.account, new Date().toISOString().slice(0, 10)).toLocaleString('zh-TW');
+    },
+    // Active pledges against this loan, e.g. "2330×1000、0050×2000".
+    pledgeSummary() {
+      return Store.state.pledges
+        .filter((p) => p.loanAccountId === this.account.id && !p.isReleased)
+        .map((p) => p.ticker + '×' + p.quantity)
+        .join('、');
     },
     canExtend() {
       return this.account.loanExtensions < this.account.loanMaxExtensions;
@@ -75,10 +82,12 @@ const AccountRowItem = {
           年利率 {{ loanRateDisplay }}% · 到期 {{ account.loanMaturity || '未設定' }}<span v-if="loanOverdue" class="negative">(已到期)</span>
           · 展延 {{ account.loanExtensions }}/{{ account.loanMaxExtensions }} · 應付利息 {{ loanAccruedInterest }}
         </div>
+        <div v-if="isLoan" class="list-row-sub">質押:{{ pledgeSummary || '無' }}</div>
       </div>
       <div class="list-row-amount" :class="{ negative: isNegative }">{{ displayAmount }}</div>
       <div class="list-row-actions">
         <button v-if="isLoan" :disabled="!canExtend" @click="$emit('extend', account)">展延</button>
+        <button v-if="isLoan" @click="$emit('pledge', account)">質押</button>
         <button v-if="isLoan" @click="$emit('repay', account)">還款</button>
         <button @click="$emit('edit', account)">編輯</button>
         <button @click="$emit('toggle-archive', account)">{{ account.isArchived ? '取消封存' : '封存' }}</button>
@@ -89,12 +98,13 @@ const AccountRowItem = {
 };
 
 const AccountsView = {
-  components: { AccountRowItem, IconPickerField, LoanExtendModal, LoanRepayModal },
+  components: { AccountRowItem, IconPickerField, LoanExtendModal, LoanRepayModal, LoanPledgeModal },
   mixins: [DragSortMixin],
   data() {
     return {
       extendingLoanId: null, // loan whose 展延 dialog is open
       repayingLoanId: null, // loan whose 還款 dialog is open
+      pledgingLoanId: null, // loan whose 質押 dialog is open
       editingId: null, // null = form closed
       form: this.blankForm(),
       rateFieldsTouched: false, // once the operator edits a rate, market changes stop overwriting it
@@ -325,7 +335,7 @@ const AccountsView = {
           v-for="(a, i) in displayList('loan', loanAccounts)" :key="a.id"
           :account="a" list-id="loan" :index="i" :dragging="dragId === a.id"
           @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
-          @extend="extendingLoanId = $event.id" @repay="repayingLoanId = $event.id"
+          @extend="extendingLoanId = $event.id" @repay="repayingLoanId = $event.id" @pledge="pledgingLoanId = $event.id"
           @handle-down="startDrag('loan', loanAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
         />
         <div v-if="loanAccounts.length === 0" class="empty">還沒有借款</div>
@@ -397,6 +407,7 @@ const AccountsView = {
 
       <LoanExtendModal v-if="extendingLoanId" :loan-id="extendingLoanId" @close="extendingLoanId = null" />
       <LoanRepayModal v-if="repayingLoanId" :loan-id="repayingLoanId" @close="repayingLoanId = null" />
+      <LoanPledgeModal v-if="pledgingLoanId" :loan-id="pledgingLoanId" @close="pledgingLoanId = null" />
     </div>
   `,
 };

@@ -104,6 +104,9 @@ const InvestmentOverviewView = {
     fmtPrice(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
     },
+    pledgedFor(h) {
+      return Store.pledgedQuantity(h.market, h.ticker);
+    },
     fmtPercent(amount) {
       return this.portfolioTotal > 0 ? (amount / this.portfolioTotal * 100).toFixed(1) + '%' : '0%';
     },
@@ -186,6 +189,7 @@ const InvestmentOverviewView = {
                 <div class="list-row-title">{{ h.ticker }}</div>
                 <div class="list-row-sub">
                   {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + fmtPrice(h.avgCost)) : '已出清' }}
+                  <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
                 </div>
               </div>
               <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">

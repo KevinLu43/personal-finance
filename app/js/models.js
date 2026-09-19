@@ -683,6 +683,53 @@ function accruedInterest(account, transactions, asOfDate) {
   return Math.round(total);
 }
 
+// One block of shares put up as collateral against one loan. Quantity is
+// what is locked, not a value — the app has no live quotes, so a pledge
+// carries no price; its only effect is to take those shares out of what
+// the sell form will let you sell until it is released.
+function newPledge(fields) {
+  return {
+    id: uuid(),
+    loanAccountId: fields.loanAccountId,
+    accountId: fields.accountId, // the 證券交割 account holding the shares
+    market: fields.market,
+    ticker: fields.ticker,
+    quantity: Number(fields.quantity),
+    date: fields.date,
+    note: fields.note || '',
+    isReleased: false,
+    releasedDate: null,
+    updatedAt: nowIso(),
+  };
+}
+
+// Shares of one market+ticker currently held (moving-average pool, so a sell
+// only counts once the buys before it do), optionally narrowed to one
+// account, optionally ignoring one trade — the sell form passes the trade it
+// is editing so that trade's own quantity isn't counted against itself.
+function heldQuantityOf(investments, { market, ticker, accountId, excludeId }) {
+  const list = investments.filter(
+    (i) => i.market === market && i.ticker === ticker && (!accountId || i.accountId === accountId) && i.id !== excludeId
+  );
+  const h = holdingsSummary(list).find((x) => x.market === market && x.ticker === ticker);
+  return h ? Math.max(0, h.quantity) : 0;
+}
+
+// Shares of one market+ticker locked by active (unreleased) pledges,
+// optionally narrowed to one holding account or one loan.
+function pledgedQuantityOf(pledges, { market, ticker, accountId, loanAccountId }) {
+  return pledges
+    .filter(
+      (p) =>
+        !p.isReleased &&
+        p.market === market &&
+        p.ticker === ticker &&
+        (!accountId || p.accountId === accountId) &&
+        (!loanAccountId || p.loanAccountId === loanAccountId)
+    )
+    .reduce((sum, p) => sum + p.quantity, 0);
+}
+
 // Net worth as of a cutoff date: the same accountBalance() math, just fed
 // transactions/investments pre-filtered to "on or before that date" instead
 // of the full history. Every account (including an archived one) is scored
@@ -866,6 +913,7 @@ function buildBackup(tables) {
       transactionLabels: tables.transactionLabels,
       investments: tables.investments,
       recurringTransactions: tables.recurringTransactions,
+      pledges: tables.pledges,
     },
   };
 }
@@ -903,6 +951,9 @@ window.Models = {
   netWorthTrend,
   accountHoldingsCost,
   accruedInterest,
+  newPledge,
+  heldQuantityOf,
+  pledgedQuantityOf,
   isLiabilityKind,
   isTransferOnlyKind,
   buildNetWorthChart,
