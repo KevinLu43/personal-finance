@@ -134,15 +134,31 @@ const TransactionFormModal = {
     categoryGroupLabel() {
       return this.form.type === 'income' ? '收入分類' : '支出分類';
     },
+    // 證券交割 accounts are only offered for a transfer (funding one from a
+    // bank, or moving proceeds back out) — an expense or income never
+    // touches one directly, trades settle through the 投資 form instead.
     accountGroups() {
       const kinds = [
         { kind: 'cash', label: '現金' },
         { kind: 'bank', label: '銀行' },
         { kind: 'credit_card', label: '信用卡' },
       ];
+      if (this.form.type === 'transfer') kinds.push({ kind: 'brokerage', label: '證券交割' });
       return kinds
         .map(({ kind, label }) => ({ label, accounts: this.accounts.filter((a) => a.kind === kind) }))
         .filter((g) => g.accounts.length > 0);
+    },
+  },
+  watch: {
+    // Leaving 轉帳 while a 證券交割 account is picked would leave a value the
+    // select no longer lists, so fall back to a bookable account.
+    'form.type'(type) {
+      if (type === 'transfer') return;
+      const current = this.accounts.find((a) => a.id === this.form.accountId);
+      if (current && current.kind !== 'brokerage') return;
+      const bookable = this.accounts.filter((a) => a.kind !== 'brokerage');
+      const fallback = bookable.find((a) => a.isDefault) || bookable[0];
+      this.form.accountId = fallback ? fallback.id : '';
     },
   },
   methods: {

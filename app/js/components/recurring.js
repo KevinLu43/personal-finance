@@ -29,20 +29,34 @@ const RecurringFormModal = {
     categoryGroupLabel() {
       return this.form.type === 'income' ? '收入分類' : '支出分類';
     },
-    // Same cash/bank/credit_card grouping (no brokerage) TransactionFormModal
-    // uses — a recurring rule is a regular ledger entry, not a trade.
+    // Same grouping TransactionFormModal uses — a recurring rule is a
+    // regular ledger entry, so 證券交割 accounts appear only for a transfer
+    // (e.g. a monthly deposit into one), never for an expense or income.
     accountGroups() {
       const kinds = [
         { kind: 'cash', label: '現金' },
         { kind: 'bank', label: '銀行' },
         { kind: 'credit_card', label: '信用卡' },
       ];
+      if (this.form.type === 'transfer') kinds.push({ kind: 'brokerage', label: '證券交割' });
       return kinds
         .map(({ kind, label }) => ({ label, accounts: this.accounts.filter((a) => a.kind === kind) }))
         .filter((g) => g.accounts.length > 0);
     },
     existingRule() {
       return this.isNew ? null : Store.state.recurringTransactions.find((r) => r.id === this.editingId);
+    },
+  },
+  watch: {
+    // Leaving 轉帳 while a 證券交割 account is picked would leave a value the
+    // select no longer lists, so fall back to a bookable account.
+    'form.type'(type) {
+      if (type === 'transfer') return;
+      const current = this.accounts.find((a) => a.id === this.form.accountId);
+      if (current && current.kind !== 'brokerage') return;
+      const bookable = this.accounts.filter((a) => a.kind !== 'brokerage');
+      const fallback = bookable.find((a) => a.isDefault) || bookable[0];
+      this.form.accountId = fallback ? fallback.id : '';
     },
   },
   methods: {
