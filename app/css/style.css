@@ -133,12 +133,13 @@ body {
 
 .kpi-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
 }
 
 .kpi-card {
-  flex: 1;
+  flex: 1 1 110px;
   background: var(--surface);
   border-radius: 12px;
   padding: 12px;
@@ -972,3 +973,15 @@ button.primary {
 .legend-dot.worth { background: #7950f2; border-radius: 1px; transform: rotate(45deg); width: 7px; height: 7px; }
 .trend-worth-line { fill: none; stroke: #7950f2; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .trend-worth-dot { fill: #7950f2; vector-effect: non-scaling-stroke; }
+
+.kpi-delta { font-size: 11px; margin-top: 2px; color: var(--muted); }
+.kpi-delta.good { color: var(--income); }
+.kpi-delta.bad { color: var(--expense); }
+
+/* Trend chart month picking: transparent full-height columns catch the tap. */
+.trend-hit { fill: transparent; cursor: pointer; }
+.trend-pick { fill: var(--accent); opacity: 0.1; pointer-events: none; }
+.trend-labels span { cursor: pointer; }
+.trend-labels span.picked { font-weight: 700; }
+.trend-readout { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; min-height: 20px; margin: 4px 0; }
+.trend-readout.empty { color: var(--muted); font-size: 12px; }

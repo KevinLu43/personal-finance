@@ -47,15 +47,21 @@ const DashboardView = {
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
       expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
+      trendPick: null, // index of the month picked on the trend chart, for the readout
     };
   },
   watch: {
     // A different year or mode is a different list; don't carry an open month over.
     viewMode() {
+      this.trendPick = null;
       this.expandedMonth = null;
       this.expandedDate = null;
     },
+    month() {
+      this.trendPick = null;
+    },
     year() {
+      this.trendPick = null;
       this.expandedMonth = null;
       this.expandedDate = null;
     },
@@ -128,6 +134,44 @@ const DashboardView = {
     netWorthChange() {
       const months = this.netWorthTrendMonths;
       return months.length < 2 ? 0 : months[months.length - 1].netWorth - months[0].netWorth;
+    },
+    // The period right before the selected one (last month / last year), for
+    // the "較上月" deltas on the summary cards.
+    previousSummary() {
+      if (this.viewMode === 'year') return Store.yearlySummary(this.year - 1);
+      const prev = this.month === 1 ? `${this.year - 1}-12` : `${this.year}-${String(this.month - 1).padStart(2, '0')}`;
+      return Store.monthlySummary(prev);
+    },
+    // Net worth at the end of the selected period and how far it moved over it
+    // (month: vs the previous month's end; year: vs the previous December's).
+    netWorthKpi() {
+      const months = this.viewMode === 'year'
+        ? Store.netWorthTrend(`${this.year}-12`, 13)
+        : Store.netWorthTrend(this.yearMonth, 2);
+      const last = months[months.length - 1];
+      const first = months[0];
+      return { value: last.netWorth, change: months.length < 2 ? 0 : last.netWorth - first.netWorth };
+    },
+    kpiCards() {
+      const year = this.viewMode === 'year';
+      const s = this.activeSummary;
+      const p = this.previousSummary;
+      const w = this.netWorthKpi;
+      return [
+        { key: 'income', label: year ? '全年收入' : '收入', value: s.income, tone: 'income', delta: this.kpiDelta(s.income, p.income, true) },
+        { key: 'expense', label: year ? '全年支出' : '支出', value: s.expense, tone: 'expense', delta: this.kpiDelta(s.expense, p.expense, false) },
+        { key: 'net', label: year ? '全年結餘' : '結餘', value: s.net, tone: s.net >= 0 ? 'income' : 'expense', delta: this.kpiDelta(s.net, p.net, true) },
+        { key: 'worth', label: year ? '年底淨值' : '月底淨值', value: w.value, tone: w.value >= 0 ? 'income' : 'expense', changeText: (year ? '今年 ' : '本月 ') + (w.change >= 0 ? '+' : '') + this.fmt(w.change), changeGood: w.change >= 0 },
+      ];
+    },
+    // What the trend chart's picked month reads out: that month's income,
+    // expense and net, plus net worth at its end.
+    trendReadout() {
+      const i = this.trendPick;
+      const m = i === null ? null : this.activeTrendMonths[i];
+      if (!m) return null;
+      const w = this.netWorthTrendMonths[i];
+      return { label: m.yearMonth.slice(0, 4) + ' 年 ' + m.month + ' 月', income: m.income, expense: m.expense, net: m.net, worth: w ? w.netWorth : null };
     },
     donutSegments() {
       return Models.buildDonutSegments(this.activeSummary.categoryBreakdown);
@@ -369,6 +413,20 @@ const DashboardView = {
   },
   methods: {
     // Net worth's marker: a diamond, so it isn't mistaken for the net line's circles.
+    // "較上月 ▲12%" against the previous period; `goodWhenUp` says whether a
+    // rise is the good direction (income, net) or the bad one (expense).
+    kpiDelta(cur, prev, goodWhenUp) {
+      const label = this.viewMode === 'year' ? '較去年' : '較上月';
+      if (cur === prev) return { text: label + ' 持平', good: null };
+      if (!prev) return { text: label + ' 新增', good: null };
+      const pct = Math.round(((cur - prev) / Math.abs(prev)) * 100);
+      if (pct === 0) return { text: label + ' 持平', good: null };
+      const up = cur > prev;
+      return { text: label + ' ' + (up ? '▲' : '▼') + Math.abs(pct) + '%', good: up === goodWhenUp };
+    },
+    pickTrend(i) {
+      this.trendPick = this.trendPick === i ? null : i;
+    },
     diamondPoints(x, y) {
       return [x + ',' + (y - 3), (x + 2.5) + ',' + y, x + ',' + (y + 3), (x - 2.5) + ',' + y].join(' ');
     },
@@ -468,17 +526,11 @@ const DashboardView = {
       </div>
 
       <div class="kpi-row">
-        <div class="kpi-card income">
-          <div class="kpi-label">{{ viewMode === 'year' ? '全年收入' : '收入' }}</div>
-          <div class="kpi-value">{{ fmt(activeSummary.income) }}</div>
-        </div>
-        <div class="kpi-card expense">
-          <div class="kpi-label">{{ viewMode === 'year' ? '全年支出' : '支出' }}</div>
-          <div class="kpi-value">{{ fmt(activeSummary.expense) }}</div>
-        </div>
-        <div class="kpi-card" :class="activeSummary.net >= 0 ? 'income' : 'expense'">
-          <div class="kpi-label">{{ viewMode === 'year' ? '全年結餘' : '結餘' }}</div>
-          <div class="kpi-value">{{ fmt(activeSummary.net) }}</div>
+        <div v-for="c in kpiCards" :key="c.key" class="kpi-card" :class="c.tone">
+          <div class="kpi-label">{{ c.label }}</div>
+          <div class="kpi-value">{{ fmt(c.value) }}</div>
+          <div v-if="c.delta" class="kpi-delta" :class="{ good: c.delta.good === true, bad: c.delta.good === false }">{{ c.delta.text }}</div>
+          <div v-else class="kpi-delta" :class="c.changeGood ? 'good' : 'bad'">{{ c.changeText }}</div>
         </div>
       </div>
 
@@ -492,7 +544,18 @@ const DashboardView = {
             <span class="legend-item"><span class="legend-dot net"></span>結餘</span>
           </div>
         </div>
+        <div class="trend-readout" :class="{ empty: !trendReadout }">
+          <template v-if="trendReadout">
+            <strong>{{ trendReadout.label }}</strong>
+            <span class="positive">收入 {{ fmt(trendReadout.income) }}</span>
+            <span class="negative">支出 {{ fmt(trendReadout.expense) }}</span>
+            <span :class="trendReadout.net >= 0 ? 'positive' : 'negative'">結餘 {{ fmt(trendReadout.net) }}</span>
+            <span v-if="trendReadout.worth !== null">淨值 {{ fmt(trendReadout.worth) }}</span>
+          </template>
+          <template v-else>點選月份查看數字</template>
+        </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
+          <rect v-if="trendPick !== null" :x="trendPick * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-pick" />
           <line x1="0" :y1="trendChart.baselineY" x2="300" :y2="trendChart.baselineY" class="trend-baseline" />
           <template v-for="b in trendChart.bars" :key="b.yearMonth">
             <rect :x="b.expenseX" :y="b.expenseY" :width="trendChart.barWidth" :height="b.expenseH" fill="var(--expense)" />
@@ -500,6 +563,7 @@ const DashboardView = {
           </template>
           <polyline :points="trendChart.netPoints" class="trend-net-line" />
           <circle v-for="b in trendChart.bars" :key="'dot-' + b.yearMonth" :cx="b.netX" :cy="b.netY" r="2.5" class="trend-net-dot" />
+          <rect v-for="(b, i) in trendChart.bars" :key="'hit-' + b.yearMonth" :x="i * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-hit" @click="pickTrend(i)" />
         </svg>
         <!-- Net worth gets its own scale (it's nowhere near 0), stacked under the
              bars so both read against the one month axis at the bottom. -->
@@ -508,11 +572,13 @@ const DashboardView = {
           <span class="net-worth-change" :class="netWorthChange >= 0 ? 'positive' : 'negative'">{{ netWorthChange >= 0 ? '+' : '' }}{{ fmt(netWorthChange) }}</span>
         </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
+          <rect v-if="trendPick !== null" :x="trendPick * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-pick" />
           <polyline :points="netWorthChart.points" class="trend-worth-line" />
           <polygon v-for="d in netWorthChart.dots" :key="'nw-' + d.yearMonth" :points="diamondPoints(d.x, d.y)" class="trend-worth-dot" />
+          <rect v-for="(d, i) in netWorthChart.dots" :key="'nwhit-' + d.yearMonth" :x="i * 300 / netWorthChart.dots.length" y="-4" :width="300 / netWorthChart.dots.length" height="108" class="trend-hit" @click="pickTrend(i)" />
         </svg>
         <div class="trend-labels">
-          <span v-for="b in trendChart.bars" :key="'lbl-' + b.yearMonth">{{ b.month }}月</span>
+          <span v-for="(b, i) in trendChart.bars" :key="'lbl-' + b.yearMonth" :class="{ picked: trendPick === i }" @click="pickTrend(i)">{{ b.month }}月</span>
         </div>
       </section>
 
