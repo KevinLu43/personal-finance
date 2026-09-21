@@ -297,6 +297,7 @@ body {
 .legend-dot.net { background: var(--accent); }
 
 .trend-svg {
+  overflow: visible; /* markers at the min/max stick out past the viewBox */
   width: 100%;
   height: 130px;
   display: block;
@@ -540,6 +541,9 @@ body {
 
 /* Secondary detail after a name in a breakdown row (a loan's principal/interest split). */
 .row-detail { margin-left: 6px; font-size: 11px; font-weight: 400; color: var(--muted); }
+
+/* The dates inside an opened month of the year view's 記帳明細, indented under it. */
+.month-detail { margin: 2px 0 6px 12px; padding-left: 10px; border-left: 2px solid var(--line); }
 
 /* Company name shown beside a ticker code, secondary to the code itself. */
 .ticker-name { margin-left: 6px; font-size: 12px; font-weight: 400; color: var(--muted); }
@@ -932,6 +936,17 @@ button.primary {
     align-items: start;
   }
   .panel-grid .panel { margin-bottom: 0; }
+  /* Two related panels shown side by side (fixed spend + income breakdown, card
+     debt + card spend, category + label breakdown). auto-fit collapses an empty
+     track, so when only one of the pair has anything to show it takes the full
+     row instead of leaving a hole; below ~540px the two stack. */
+  .panel-pair {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
   .panel-grid .span-2 { grid-column: 1 / -1; }
 }
 
@@ -947,3 +962,13 @@ button.primary {
   .list-row-main { flex: 1 1 140px; }
   .list-row-actions { flex: 1 0 100%; }
 }
+
+.panel-contents { display: contents; }
+
+.trend-sub-header { margin-top: 14px; }
+.trend-sub-title { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted, #868e96); }
+/* Net worth's own line and marker (a diamond, vs the net line's circle) so the
+   two lines never read as the same series. */
+.legend-dot.worth { background: #7950f2; border-radius: 1px; transform: rotate(45deg); width: 7px; height: 7px; }
+.trend-worth-line { fill: none; stroke: #7950f2; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trend-worth-dot { fill: #7950f2; vector-effect: non-scaling-stroke; }

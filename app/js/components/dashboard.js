@@ -1,7 +1,39 @@
 const DASHBOARD_TYPE_LABELS = { expense: '支出', income: '收入', transfer: '轉帳' };
 
+// The 記帳明細 date groups (one folded header per day, its transactions
+// underneath when open). Shared by the month view, where they are the whole
+// list, and the year view, where each month folds a set of them.
+const DashboardDateGroups = {
+  components: { TransactionRowItem },
+  props: {
+    groups: { type: Array, required: true },
+    expandedDate: { type: String, default: null },
+  },
+  emits: ['toggle', 'edit', 'remove'],
+  methods: {
+    fmt(n) {
+      return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+    },
+  },
+  template: `
+    <div v-for="g in groups" :key="g.date" class="subsection">
+      <div class="subsection-header clickable" @click="$emit('toggle', g.date)">
+        <span>{{ g.date }}</span>
+        <span>
+          <span v-if="g.expenseTotal" class="negative">-{{ fmt(g.expenseTotal) }}</span>
+          <span v-if="g.incomeTotal" class="positive"> +{{ fmt(g.incomeTotal) }}</span>
+          <span class="expand-arrow" :class="{ open: expandedDate === g.date }">›</span>
+        </span>
+      </div>
+      <template v-if="expandedDate === g.date">
+        <TransactionRowItem v-for="t in g.items" :key="t.id" :transaction="t" @edit="$emit('edit', $event)" @remove="$emit('remove', $event)" />
+      </template>
+    </div>
+  `,
+};
+
 const DashboardView = {
-  components: { TransactionRowItem, TransactionFormModal },
+  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups },
   data() {
     const now = new Date();
     return {
@@ -14,7 +46,19 @@ const DashboardView = {
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
+      expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
     };
+  },
+  watch: {
+    // A different year or mode is a different list; don't carry an open month over.
+    viewMode() {
+      this.expandedMonth = null;
+      this.expandedDate = null;
+    },
+    year() {
+      this.expandedMonth = null;
+      this.expandedDate = null;
+    },
   },
   computed: {
     yearMonth() {
@@ -204,6 +248,28 @@ const DashboardView = {
       }
       return groups;
     },
+    // Year view folds 記帳明細 by month — a whole year of dates in one list
+    // is far too long to scroll — each month showing its count and totals and
+    // opening onto its date groups. A search opens every month that has a
+    // match, since a hit hidden inside a folded month would look like no result.
+    monthGroups() {
+      const months = [];
+      const byKey = new Map();
+      for (const g of this.groupedByDate) {
+        const key = g.date.slice(0, 7);
+        let m = byKey.get(key);
+        if (!m) {
+          m = { key, month: Number(key.slice(5, 7)), groups: [], count: 0, expenseTotal: 0, incomeTotal: 0 };
+          byKey.set(key, m);
+          months.push(m);
+        }
+        m.groups.push(g);
+        m.count += g.items.length;
+        m.expenseTotal += g.expenseTotal;
+        m.incomeTotal += g.incomeTotal;
+      }
+      return months;
+    },
     accountsWithBalance() {
       return Store.activeAccounts().map((a) => {
         const balance = Store.accountBalance(a); // what is owed, for a credit card — always positive
@@ -302,6 +368,10 @@ const DashboardView = {
     },
   },
   methods: {
+    // Net worth's marker: a diamond, so it isn't mistaken for the net line's circles.
+    diamondPoints(x, y) {
+      return [x + ',' + (y - 3), (x + 2.5) + ',' + y, x + ',' + (y + 3), (x - 2.5) + ',' + y].join(' ');
+    },
     fmt(n) {
       return n.toLocaleString('zh-TW', { maximumFractionDigits: 0 });
     },
@@ -343,6 +413,12 @@ const DashboardView = {
     },
     toggleLabelExpand(labelId) {
       this.expandedLabelId = this.expandedLabelId === labelId ? null : labelId;
+    },
+    toggleMonthExpand(key) {
+      this.expandedMonth = this.expandedMonth === key ? null : key;
+    },
+    isMonthOpen(key) {
+      return this.query.trim() !== '' || this.expandedMonth === key;
     },
     toggleDateExpand(date) {
       this.expandedDate = this.expandedDate === date ? null : date;
@@ -409,7 +485,7 @@ const DashboardView = {
       <div class="panel-grid">
       <section class="panel span-2">
         <div class="view-header">
-          <h3>收支趨勢<span class="muted"> · {{ viewMode === 'year' ? (year + ' 年 1–12 月') : '最近 6 個月' }}</span></h3>
+          <h3>收支與淨值趨勢<span class="muted"> · {{ viewMode === 'year' ? (year + ' 年 1–12 月') : '最近 6 個月' }}</span></h3>
           <div class="trend-legend">
             <span class="legend-item"><span class="legend-dot expense"></span>支出</span>
             <span class="legend-item"><span class="legend-dot income"></span>收入</span>
@@ -425,46 +501,19 @@ const DashboardView = {
           <polyline :points="trendChart.netPoints" class="trend-net-line" />
           <circle v-for="b in trendChart.bars" :key="'dot-' + b.yearMonth" :cx="b.netX" :cy="b.netY" r="2.5" class="trend-net-dot" />
         </svg>
-        <div class="trend-labels">
-          <span v-for="b in trendChart.bars" :key="'lbl-' + b.yearMonth">{{ b.month }}月</span>
-        </div>
-      </section>
-
-      <section class="panel span-2">
-        <div class="view-header">
-          <h3>淨值趨勢<span class="muted"> · {{ viewMode === 'year' ? (year + ' 年 1–12 月') : '最近 6 個月' }}</span></h3>
+        <!-- Net worth gets its own scale (it's nowhere near 0), stacked under the
+             bars so both read against the one month axis at the bottom. -->
+        <div class="view-header trend-sub-header">
+          <span class="trend-sub-title"><span class="legend-dot worth"></span>淨值</span>
           <span class="net-worth-change" :class="netWorthChange >= 0 ? 'positive' : 'negative'">{{ netWorthChange >= 0 ? '+' : '' }}{{ fmt(netWorthChange) }}</span>
         </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
-          <polyline :points="netWorthChart.points" class="trend-net-line" />
-          <circle v-for="d in netWorthChart.dots" :key="'nw-' + d.yearMonth" :cx="d.x" :cy="d.y" r="2.5" class="trend-net-dot" />
+          <polyline :points="netWorthChart.points" class="trend-worth-line" />
+          <polygon v-for="d in netWorthChart.dots" :key="'nw-' + d.yearMonth" :points="diamondPoints(d.x, d.y)" class="trend-worth-dot" />
         </svg>
         <div class="trend-labels">
-          <span v-for="d in netWorthChart.dots" :key="'nwl-' + d.yearMonth">{{ d.month }}月</span>
+          <span v-for="b in trendChart.bars" :key="'lbl-' + b.yearMonth">{{ b.month }}月</span>
         </div>
-      </section>
-
-      <section v-if="viewMode === 'month'" class="panel">
-        <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
-        <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
-        <template v-else>
-          <svg viewBox="0 0 100 100" class="donut-chart">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-            <circle
-              v-for="(seg, i) in fixedExpenseDonutSegments" :key="i"
-              cx="50" cy="50" r="40" fill="none"
-              :stroke="seg.color" stroke-width="14"
-              :stroke-dasharray="seg.dash + ' ' + seg.gap"
-              :stroke-dashoffset="seg.dashOffset"
-              transform="rotate(-90 50 50)"
-            />
-          </svg>
-          <div v-for="row in fixedExpenseRows" :key="row.key" class="bar-row">
-            <span class="legend-swatch" :style="{ background: row.color }"></span>
-            <span class="bar-name">{{ row.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
-            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
-          </div>
-        </template>
       </section>
 
       <section v-if="viewMode === 'year'" class="panel span-2">
@@ -500,6 +549,24 @@ const DashboardView = {
         </div>
       </section>
 
+      <!-- Year view pairs 逐月明細 with 資產總覽; month view leaves 資產總覽 free to pair with 預算. -->
+      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
+      <section v-if="viewMode === 'year'" class="panel">
+        <h3>逐月明細</h3>
+        <div class="month-table-row month-table-header">
+          <span class="month-table-cell month">月份</span>
+          <span class="month-table-cell">收入</span>
+          <span class="month-table-cell">支出</span>
+          <span class="month-table-cell">結餘</span>
+        </div>
+        <div v-for="m in yearTrendMonths" :key="m.yearMonth" class="month-table-row">
+          <span class="month-table-cell month">{{ m.month }} 月</span>
+          <span class="month-table-cell positive">{{ fmt(m.income) }}</span>
+          <span class="month-table-cell negative">{{ fmt(m.expense) }}</span>
+          <span class="month-table-cell" :class="{ negative: m.net < 0, positive: m.net > 0 }">{{ fmt(m.net) }}</span>
+        </div>
+      </section>
+
       <section class="panel">
         <h3>資產總覽<span class="muted"> · 淨值 {{ fmt(netWorth) }}</span></h3>
         <div v-if="accountsWithBalance.length === 0" class="empty">還沒有帳戶,先到「帳戶」分頁新增一個</div>
@@ -523,7 +590,55 @@ const DashboardView = {
           </div>
         </div>
       </section>
+      </div>
+      </div>
 
+      <div class="panel-pair">
+      <section v-if="viewMode === 'month'" class="panel">
+        <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
+        <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
+        <template v-else>
+          <svg viewBox="0 0 100 100" class="donut-chart">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+            <circle
+              v-for="(seg, i) in fixedExpenseDonutSegments" :key="i"
+              cx="50" cy="50" r="40" fill="none"
+              :stroke="seg.color" stroke-width="14"
+              :stroke-dasharray="seg.dash + ' ' + seg.gap"
+              :stroke-dashoffset="seg.dashOffset"
+              transform="rotate(-90 50 50)"
+            />
+          </svg>
+          <div v-for="row in fixedExpenseRows" :key="row.key" class="bar-row">
+            <span class="legend-swatch" :style="{ background: row.color }"></span>
+            <span class="bar-name">{{ row.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
+          </div>
+        </template>
+      </section>
+
+      <section v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
+        <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
+        <svg viewBox="0 0 100 100" class="donut-chart">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+          <circle
+            v-for="(seg, i) in incomeDonutSegments" :key="i"
+            cx="50" cy="50" r="40" fill="none"
+            :stroke="seg.color" stroke-width="14"
+            :stroke-dasharray="seg.dash + ' ' + seg.gap"
+            :stroke-dashoffset="seg.dashOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div v-for="row in activeSummary.incomeCategoryBreakdown" :key="row.category.id" class="bar-row">
+          <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
+          <span class="bar-name">{{ row.category.name }}</span>
+          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
+        </div>
+      </section>
+      </div>
+
+      <div class="panel-pair">
       <section v-if="creditCardDebtBreakdown.length" class="panel">
         <h3>信用卡欠款<span class="muted"> · 共 {{ fmt(creditCardDebtTotal) }}</span></h3>
         <svg viewBox="0 0 100 100" class="donut-chart">
@@ -563,7 +678,9 @@ const DashboardView = {
           <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardSpendPercent(row.amount) }}</span>
         </div>
       </section>
+      </div>
 
+      <div class="panel-pair">
       <section class="panel">
         <h3>{{ viewMode === 'year' ? '全年分類支出' : '分類支出' }}</h3>
         <div v-if="activeSummary.categoryBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有紀錄' : '這個月還沒有紀錄' }}</div>
@@ -600,26 +717,6 @@ const DashboardView = {
         </template>
       </section>
 
-      <section v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
-        <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in incomeDonutSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in activeSummary.incomeCategoryBreakdown" :key="row.category.id" class="bar-row">
-          <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
-        </div>
-      </section>
-
       <section class="panel">
         <h3>{{ viewMode === 'year' ? '全年標籤統計' : '標籤統計' }}</h3>
         <div v-if="labelBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄' }}</div>
@@ -641,22 +738,7 @@ const DashboardView = {
           </div>
         </div>
       </section>
-
-      <section v-if="viewMode === 'year'" class="panel span-2">
-        <h3>逐月明細</h3>
-        <div class="month-table-row month-table-header">
-          <span class="month-table-cell month">月份</span>
-          <span class="month-table-cell">收入</span>
-          <span class="month-table-cell">支出</span>
-          <span class="month-table-cell">結餘</span>
-        </div>
-        <div v-for="m in yearTrendMonths" :key="m.yearMonth" class="month-table-row">
-          <span class="month-table-cell month">{{ m.month }} 月</span>
-          <span class="month-table-cell positive">{{ fmt(m.income) }}</span>
-          <span class="month-table-cell negative">{{ fmt(m.expense) }}</span>
-          <span class="month-table-cell" :class="{ negative: m.net < 0, positive: m.net > 0 }">{{ fmt(m.net) }}</span>
-        </div>
-      </section>
+      </div>
 
       <section class="panel">
         <h3>記帳明細</h3>
@@ -674,19 +756,22 @@ const DashboardView = {
         </div>
 
         <div v-if="groupedByDate.length === 0" class="empty">找不到符合條件的紀錄</div>
-        <div v-for="g in groupedByDate" :key="g.date" class="subsection">
-          <div class="subsection-header clickable" @click="toggleDateExpand(g.date)">
-            <span>{{ g.date }}</span>
-            <span>
-              <span v-if="g.expenseTotal" class="negative">-{{ fmt(g.expenseTotal) }}</span>
-              <span v-if="g.incomeTotal" class="positive"> +{{ fmt(g.incomeTotal) }}</span>
-              <span class="expand-arrow" :class="{ open: expandedDate === g.date }">›</span>
-            </span>
+        <template v-if="viewMode === 'year'">
+          <div v-for="m in monthGroups" :key="m.key" class="subsection">
+            <div class="subsection-header clickable" @click="toggleMonthExpand(m.key)">
+              <span>{{ m.key.slice(0, 4) }} 年 {{ m.month }} 月<span class="muted"> · {{ m.count }} 筆</span></span>
+              <span>
+                <span v-if="m.expenseTotal" class="negative">-{{ fmt(m.expenseTotal) }}</span>
+                <span v-if="m.incomeTotal" class="positive"> +{{ fmt(m.incomeTotal) }}</span>
+                <span class="expand-arrow" :class="{ open: isMonthOpen(m.key) }">›</span>
+              </span>
+            </div>
+            <div v-if="isMonthOpen(m.key)" class="month-detail">
+              <DashboardDateGroups :groups="m.groups" :expanded-date="expandedDate" @toggle="toggleDateExpand" @edit="openEdit" @remove="remove" />
+            </div>
           </div>
-          <template v-if="expandedDate === g.date">
-            <TransactionRowItem v-for="t in g.items" :key="t.id" :transaction="t" @edit="openEdit" @remove="remove" />
-          </template>
-        </div>
+        </template>
+        <DashboardDateGroups v-else :groups="groupedByDate" :expanded-date="expandedDate" @toggle="toggleDateExpand" @edit="openEdit" @remove="remove" />
       </section>
       </div>
 

@@ -846,16 +846,16 @@ function netWorthTrend(accounts, transactions, investments, endYearMonth, monthC
 // chart it sits next to. Unlike that chart, the baseline is *not* forced to
 // 0 — net worth is usually a large number far from 0, so pinning the
 // baseline there would flatten the line into something barely readable.
-// Points are spread edge-to-edge across the width rather than centered in
-// per-month columns, since there are no bars here to make room for.
+// Points sit at the center of per-month columns, exactly where
+// buildTrendChart centers its bars, so the two charts can share one month axis.
 function buildNetWorthChart(months) {
   const values = months.map((m) => m.netWorth);
   const maxValue = Math.max(...values);
   const minValue = Math.min(...values);
   const range = maxValue - minValue || 1;
-  const stepX = months.length > 1 ? 300 / (months.length - 1) : 0;
+  const colWidth = 300 / months.length;
   const y = (v) => 100 - ((v - minValue) / range) * 100;
-  const dots = months.map((m, i) => ({ x: i * stepX, y: y(m.netWorth), yearMonth: m.yearMonth, month: m.month }));
+  const dots = months.map((m, i) => ({ x: colWidth * i + colWidth / 2, y: y(m.netWorth), yearMonth: m.yearMonth, month: m.month }));
   return { points: dots.map((d) => `${d.x},${d.y}`).join(' '), dots };
 }
 
