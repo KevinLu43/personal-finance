@@ -157,12 +157,33 @@ const AccountsView = {
     loanFormError() {
       const f = this.form;
       if (f.kind !== 'loan' || f.loanType === 'pledge') return '';
-      if (this.editingId === 'new' && !(Number(f.initialBalance) > 0)) return '請填貸款金額(目前還欠的本金),沒有本金就沒有可還的款';
+      if (this.editingId === 'new' && !(Number(f.initialBalance) > 0)) return '請填貸款金額,沒有本金就沒有可還的款';
       if (!(Number(f.loanInstallments) >= 1)) return '請填分期數(至少 1 期)';
       if (Number(f.loanPaidInstallments) >= Number(f.loanInstallments)) return '已還期數要小於分期數';
       if (!f.loanNextDue) return this.editingId === 'new' ? '請填首期還款日' : '請填下次還款日';
       if (!f.loanPayFromAccountId) return '請選擇扣款帳戶';
       return '';
+    },
+    // A new installment loan is entered from its original amount; when some
+    // periods are already paid they are booked as past payments (see save()),
+    // and what is still owed is what the schedule implies after them.
+    newLoanStartBalance() {
+      const f = this.form;
+      if (this.editingId !== 'new' || f.kind !== 'loan' || f.loanType === 'pledge') return null;
+      return Models.installmentScheduleBalance(Number(f.initialBalance) || 0, (Number(f.loanRate) || 0) / 100, Number(f.loanInstallments) || 0, Number(f.loanPaidInstallments) || 0);
+    },
+    newLoanPreview() {
+      const start = this.newLoanStartBalance;
+      const f = this.form;
+      if (start === null || !(Number(f.initialBalance) > 0) || !(Number(f.loanInstallments) >= 1)) return '';
+      const paid = Math.max(0, Number(f.loanPaidInstallments) || 0);
+      const left = Number(f.loanInstallments) - paid;
+      if (left <= 0) return '';
+      const pay = Math.round(Models.installmentBreakdown(start, (Number(f.loanRate) || 0) / 100, left).payment);
+      const fmt = (n) => n.toLocaleString('zh-TW');
+      return paid > 0
+        ? `會補記前 ${paid} 期的還款紀錄(本金轉帳＋利息支出);補記後剩餘本金約 ${fmt(start)},之後每期約 ${fmt(pay)}`
+        : `每期約 ${fmt(pay)}`;
     },
     payableAccounts() {
       return Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
@@ -281,6 +302,16 @@ const AccountsView = {
         loanNextDue: this.form.kind === 'loan' && !isPledgeForm ? this.form.loanNextDue || null : null,
         loanPayFromAccountId: this.form.kind === 'loan' && !isPledgeForm ? this.form.loanPayFromAccountId || null : null,
       };
+      // A new installment loan entered part-way through its term: the amount is
+      // the original loan, and the periods already paid are booked as real
+      // past payments. Rewind the first date by that many months and start the
+      // count at 0, and the monthly engine below books each of them — a
+      // principal transfer and an interest expense, dated when they fell due.
+      const alreadyPaid = this.newLoanStartBalance !== null ? fields.loanPaidInstallments : 0;
+      if (alreadyPaid > 0 && fields.loanNextDue) {
+        fields.loanNextDue = Models.subtractMonthsClamped(fields.loanNextDue, Number(fields.loanNextDue.slice(8, 10)), alreadyPaid);
+        fields.loanPaidInstallments = 0;
+      }
       let savedId = this.editingId;
       if (this.editingId === 'new') {
         savedId = (await Store.addAccount(fields)).id;
@@ -455,7 +486,7 @@ const AccountsView = {
               </select>
             </label>
             <label v-else>幣別 <input v-model="form.currency" /></label>
-            <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : form.kind === 'loan' && form.loanType === 'pledge' ? '目前借款餘額(起始)' : form.kind === 'loan' ? '貸款金額(目前還欠的本金)' : '起始餘額' }}
+            <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : form.kind === 'loan' && form.loanType === 'pledge' ? '目前借款餘額(起始)' : form.kind === 'loan' ? (editingId === 'new' ? '貸款金額(原始借款金額)' : '貸款金額(目前還欠的本金)') : '起始餘額' }}
               <input type="number" v-model="form.initialBalance" />
             </label>
             <label v-if="form.kind === 'credit_card'">信用額度
@@ -473,7 +504,7 @@ const AccountsView = {
                 <span class="field-hint">每月一期、本息平均攤還</span>
               </label>
               <label>已還期數 <input type="number" min="0" step="1" v-model.number="form.loanPaidInstallments" />
-                <span class="field-hint">新貸款填 0;已經還了幾期就填幾期,並把下面的日期填成下一次還款日</span>
+                <span class="field-hint">新貸款填 0;已經還了幾期就填幾期,並把下面的日期填成下一次還款日。系統會往前補記那幾期的還款紀錄</span>
               </label>
               <label>{{ editingId === 'new' ? '首期還款日' : '下次還款日' }} <input type="date" v-model="form.loanNextDue" />
                 <span class="field-hint">之後每個月同一天自動記帳;日期若已過,會立刻補記到今天為止的期數</span>
@@ -497,6 +528,7 @@ const AccountsView = {
             </template>
           </div>
           <p v-if="loanFormError" class="field-hint negative" style="margin: 0 20px 8px;">{{ loanFormError }}</p>
+          <p v-else-if="newLoanPreview" class="field-hint" style="margin: 0 20px 8px;">{{ newLoanPreview }}</p>
           <div class="modal-actions">
             <button @click="cancel">取消</button>
             <button class="primary" :disabled="!!loanFormError" @click="save">儲存</button>

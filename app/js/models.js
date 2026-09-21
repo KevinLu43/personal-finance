@@ -711,6 +711,19 @@ function installmentBreakdown(balance, annualRate, remaining) {
   return { interest, principal, payment: principal + interest };
 }
 
+// What is still owed after `paid` of `total` equal monthly payments on a loan
+// that started at `principal` — the balance the schedule itself implies, for
+// a loan being entered part-way through its term from its original amount.
+function installmentScheduleBalance(principal, annualRate, total, paid) {
+  const p = Math.max(0, Number(principal) || 0);
+  const n = Math.max(0, Math.min(paid || 0, total || 0));
+  if (n === 0 || !total) return p;
+  const r = (annualRate || 0) / 12;
+  if (r === 0) return Math.round(p - (p / total) * n);
+  const payment = (p * r) / (1 - Math.pow(1 + r, -total));
+  return Math.max(0, Math.round(p * Math.pow(1 + r, n) - (payment * (Math.pow(1 + r, n) - 1)) / r));
+}
+
 // One block of shares put up as collateral, and the borrowing made against
 // it: every pledged stock is its own small loan with its own amount, rate,
 // maturity and extensions (brokers price each stock differently). Quantity
@@ -909,6 +922,18 @@ function addMonthClamped(dateStr, anchorDay) {
   return `${ny}-${String(nm).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+// The same day-of-month `months` calendar months earlier (or later, when
+// negative counts are flipped by the caller), clamped like addMonthClamped.
+// Used to find the first payment date of a loan entered part-way through.
+function subtractMonthsClamped(dateStr, anchorDay, months) {
+  const [y, m] = dateStr.slice(0, 7).split('-').map(Number);
+  const idx = y * 12 + (m - 1) - months;
+  const ny = Math.floor(idx / 12);
+  const nm = (idx % 12) + 1;
+  const day = Math.min(anchorDay, new Date(ny, nm, 0).getDate());
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 // Every occurrence of a recurring rule that is due (on or before todayStr)
 // but hasn't been generated yet, capped by its own remainingOccurrences
 // (null = unlimited), plus the nextDueDate and remainingOccurrences the
@@ -1101,6 +1126,8 @@ window.Models = {
   netWorthTrend,
   accountHoldingsCost,
   installmentBreakdown,
+  installmentScheduleBalance,
+  subtractMonthsClamped,
   addMonthClamped,
   newPledge,
   pledgeAccruedInterest,
