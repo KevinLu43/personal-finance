@@ -39,6 +39,28 @@ async function loadAll() {
   state.pledges = pledges;
   await migrateLabelSortOrder();
   await migrateLoanTypes();
+  await purgeOrphanLoanRecords();
+}
+
+// Loans deleted before deleteAccount learned to take a loan's records with it
+// left them behind: installment payments and interest still tagged with a loan
+// that no longer exists, plus the borrow transfer that kept inflating the
+// receiving account. Any loan id found on a live transaction that matches no
+// account is such a leftover, so those transactions — and the transfers that
+// point at the same missing id — are soft-deleted here. Nothing can create new
+// orphans any more, so this settles once and is then a no-op.
+async function purgeOrphanLoanRecords() {
+  const known = new Set(state.accounts.map((a) => a.id));
+  const orphanIds = new Set();
+  for (const t of state.transactions) {
+    if (t.isDeleted) continue;
+    for (const id of [t.loanId, t.loanRefId]) if (id && !known.has(id)) orphanIds.add(id);
+  }
+  if (orphanIds.size === 0) return;
+  const doomed = state.transactions.filter(
+    (t) => !t.isDeleted && [t.loanId, t.loanRefId, t.accountId, t.toAccountId].some((id) => id && orphanIds.has(id))
+  );
+  for (const t of doomed) await deleteTransaction(t.id);
 }
 
 // One-time upgrade for loans and pledges written before loan types and
