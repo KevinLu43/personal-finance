@@ -1,7 +1,7 @@
 const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
 
 const TransactionsView = {
-  components: { TransactionRowItem, TransactionFormModal, TransactionCategoryGroupList, RecurringTransactionsPanel },
+  components: { TransactionRowItem, TransactionFormModal, TransactionCategoryGroupList, LoanPaymentRow, RecurringTransactionsPanel },
   data() {
     const now = new Date();
     return {
@@ -47,14 +47,26 @@ const TransactionsView = {
         .filter((t) => !t.isDeleted && t.date === this.selectedDay)
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     },
+    // Loan installments are pulled out first and shown as their own
+    // 貸款還款 section, one row per payment, so neither the interest expense
+    // nor the principal transfer also shows up as a stray row below.
+    dayLoanSplit() {
+      return Models.splitLoanPayments(this.selectedDayTransactions);
+    },
+    loanPayments() {
+      return this.dayLoanSplit.payments;
+    },
+    loanPaymentDayTotal() {
+      return this.loanPayments.reduce((sum, p) => sum + p.total, 0);
+    },
     selectedDayExpenses() {
-      return this.selectedDayTransactions.filter((t) => t.type === 'expense');
+      return this.dayLoanSplit.others.filter((t) => t.type === 'expense');
     },
     selectedDayIncomes() {
-      return this.selectedDayTransactions.filter((t) => t.type === 'income');
+      return this.dayLoanSplit.others.filter((t) => t.type === 'income');
     },
     selectedDayTransfers() {
-      return this.selectedDayTransactions.filter((t) => t.type === 'transfer');
+      return this.dayLoanSplit.others.filter((t) => t.type === 'transfer');
     },
     // Each type-section groups by category (transfers have none, so that
     // section stays a flat list) — a category with just one transaction
@@ -174,6 +186,14 @@ const TransactionsView = {
               <span>轉帳</span>
             </div>
             <TransactionRowItem v-for="t in selectedDayTransfers" :key="t.id" :transaction="t" @edit="openEdit" @remove="remove" />
+          </div>
+
+          <div v-if="loanPayments.length" class="subsection">
+            <div class="subsection-header">
+              <span>貸款還款</span>
+              <span class="negative">-{{ fmt(loanPaymentDayTotal) }}</span>
+            </div>
+            <LoanPaymentRow v-for="p in loanPayments" :key="p.key" :payment="p" @edit="openEdit" @remove="remove" />
           </div>
         </template>
       </section>

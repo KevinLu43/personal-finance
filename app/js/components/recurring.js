@@ -224,6 +224,20 @@ const RecurringTransactionsPanel = {
     return { editingId: null }; // null closed, 'new' or a rule id
   },
   computed: {
+    // Loans still being paid off in installments, listed beside the rules so
+    // every standing monthly payment is in one place. Read-only here — the
+    // terms live on the account (帳戶 tab), which is where they are edited.
+    loanInstallments() {
+      const today = new Date().toISOString().slice(0, 10);
+      return Store.state.accounts
+        .filter((a) => a.kind === 'loan' && a.loanType !== 'pledge' && !a.isArchived && a.loanInstallments && a.loanNextDue)
+        .map((a) => {
+          const left = a.loanInstallments - a.loanPaidInstallments;
+          const b = Models.installmentBreakdown(Store.accountBalance(a), a.loanRate, left);
+          return { account: a, left, payment: Math.round(b.payment), day: Number(a.loanNextDue.slice(8, 10)), overdue: a.loanNextDue < today };
+        })
+        .filter((row) => row.left > 0);
+    },
     rules() {
       return Store.state.recurringTransactions
         .slice()
@@ -276,7 +290,7 @@ const RecurringTransactionsPanel = {
         <button class="primary" @click="openNew">+ 新增</button>
       </div>
 
-      <div v-if="rules.length === 0" class="empty">還沒有固定支出,適合用來記房租、訂閱、保費、薪資這類每月固定發生的項目</div>
+      <div v-if="rules.length === 0 && loanInstallments.length === 0" class="empty">還沒有固定支出,適合用來記房租、訂閱、保費、薪資這類每月固定發生的項目</div>
 
       <div v-for="r in rules" :key="r.id" class="list-row clickable" :class="{ archived: r.isArchived }" @click="openEdit(r)">
         <span class="icon-badge" :style="{ background: (category(r)?.color || '#adb5bd') + '30' }">{{ icon(r) }}</span>
@@ -290,6 +304,18 @@ const RecurringTransactionsPanel = {
         <div class="list-row-actions">
           <button @click.stop="toggleArchive(r)">{{ r.isArchived ? '取消封存' : '封存' }}</button>
         </div>
+      </div>
+
+      <div v-if="loanInstallments.length" class="subsection-header" style="margin-top: 8px;">
+        <span>貸款分期</span><span class="muted">在「帳戶」頁設定</span>
+      </div>
+      <div v-for="row in loanInstallments" :key="row.account.id" class="list-row">
+        <span class="icon-badge" style="background: #e09f3e30;">🏦</span>
+        <div class="list-row-main">
+          <div class="list-row-title">{{ row.account.name }}</div>
+          <div class="list-row-sub">每月 {{ row.day }} 日 · 下次 {{ row.account.loanNextDue }} · 剩 {{ row.left }} 期(本金＋利息)</div>
+        </div>
+        <div class="list-row-amount negative">-{{ fmt(row.payment) }}</div>
       </div>
 
       <RecurringFormModal

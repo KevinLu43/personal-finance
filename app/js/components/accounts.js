@@ -1,6 +1,6 @@
 const AccountRowItem = {
   props: ['account', 'listId', 'index', 'dragging'],
-  emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up', 'extend', 'repay', 'pledge'],
+  emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up', 'pledge'],
   computed: {
     isCredit() {
       return this.account.kind === 'credit_card';
@@ -29,30 +29,41 @@ const AccountRowItem = {
     loanRateDisplay() {
       return ((this.account.loanRate || 0) * 100).toLocaleString('zh-TW', { maximumFractionDigits: 4 });
     },
-    loanOverdue() {
-      return !!this.account.loanMaturity && this.account.loanMaturity < new Date().toISOString().slice(0, 10);
+    // Installments left, and roughly what the next payment will be — the
+    // same figures the monthly engine (Store.generateLoanInstallments) uses.
+    installmentsLeft() {
+      return Math.max(0, (this.account.loanInstallments || 0) - (this.account.loanPaidInstallments || 0));
     },
-    loanAccruedInterest() {
-      return Store.accruedInterest(this.account, new Date().toISOString().slice(0, 10)).toLocaleString('zh-TW');
+    // Why an installment loan isn't booking payments, when it isn't — spelled
+    // out on the row instead of leaving the operator to guess from an empty
+    // ledger.
+    installmentIssue() {
+      const a = this.account;
+      if (!this.isLoan || this.isPledge || !a.loanInstallments || this.installmentsLeft <= 0) return '';
+      if (!a.loanPayFromAccountId) return '缺少扣款帳戶,不會自動記帳(按「編輯」補上)';
+      if (!Store.state.accounts.some((x) => x.id === a.loanPayFromAccountId)) return '扣款帳戶已不存在,請按「編輯」重新選擇';
+      if (!a.loanNextDue) return '缺少還款日,不會自動記帳(按「編輯」補上)';
+      if (Store.accountBalance(a) <= 0) return '目前借款餘額是 0,沒有可還的本金,所以不會記帳(按「編輯」填貸款金額)';
+      return '';
     },
-    // Active pledges against this loan, e.g. "2330×1000、0050×2000".
-    pledgeSummary() {
-      return Store.state.pledges
-        .filter((p) => p.loanAccountId === this.account.id && !p.isReleased)
-        .map((p) => p.ticker + '×' + p.quantity)
-        .join('、');
+    nextPayment() {
+      const b = Models.installmentBreakdown(Store.accountBalance(this.account), this.account.loanRate, this.installmentsLeft);
+      return Math.round(b.payment).toLocaleString('zh-TW');
     },
-    canExtend() {
-      return this.account.loanExtensions < this.account.loanMaxExtensions;
+    isPledge() {
+      return Models.isPledgeLoan(this.account);
     },
-    creditLimitDisplay() {
-      return Number(this.account.creditLimit || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+    loanTypeLabel() {
+      return Models.LOAN_TYPE_LABELS[this.account.loanType] || '其他';
     },
-    feeRateDisplay() {
-      return ((this.account.feeRate || 0) * 100).toLocaleString('zh-TW', { maximumFractionDigits: 4 });
+    // A 質押 loan is its pledged stocks: how many are still pledged and the
+    // interest they have accrued together (each has its own rate).
+    activePledges() {
+      return Store.state.pledges.filter((p) => p.loanAccountId === this.account.id && !p.isReleased);
     },
-    icon() {
-      return Models.accountIcon(this.account);
+    pledgeAccruedTotal() {
+      const today = new Date().toISOString().slice(0, 10);
+      return this.activePledges.reduce((sum, p) => sum + Store.pledgeAccruedInterest(p, today), 0).toLocaleString('zh-TW');
     },
   },
   template: `
@@ -78,17 +89,20 @@ const AccountRowItem = {
           <span v-if="isCredit"> · 額度 {{ creditLimitDisplay }}</span>
           <span v-if="isBrokerage"> · {{ account.market === 'TW' ? '台股' : '美股' }} · 手續費 {{ feeRateDisplay }}%</span>
         </div>
-        <div v-if="isLoan" class="list-row-sub">
-          年利率 {{ loanRateDisplay }}% · 到期 {{ account.loanMaturity || '未設定' }}<span v-if="loanOverdue" class="negative">(已到期)</span>
-          · 展延 {{ account.loanExtensions }}/{{ account.loanMaxExtensions }} · 應付利息 {{ loanAccruedInterest }}
+        <div v-if="isPledge" class="list-row-sub">
+          {{ loanTypeLabel }} · 質押 {{ activePledges.length }} 檔 · 應付利息合計 {{ pledgeAccruedTotal }}
         </div>
-        <div v-if="isLoan" class="list-row-sub">質押:{{ pledgeSummary || '無' }}</div>
+        <div v-else-if="isLoan && account.loanInstallments" class="list-row-sub">
+          {{ loanTypeLabel }} · 年利率 {{ loanRateDisplay }}% · 已還 {{ account.loanPaidInstallments }}/{{ account.loanInstallments }} 期
+          <template v-if="installmentsLeft > 0"> · 下次 {{ account.loanNextDue }} · 每期約 {{ nextPayment }}</template>
+          <template v-else> · 已還清</template>
+        </div>
+        <div v-if="installmentIssue" class="list-row-sub negative">⚠ {{ installmentIssue }}</div>
+        <div v-if="isLoan && !isPledge && !account.loanInstallments" class="list-row-sub">{{ loanTypeLabel }} · 尚未設定分期(按「編輯」設定分期數與扣款帳戶)</div>
       </div>
       <div class="list-row-amount" :class="{ negative: isNegative }">{{ displayAmount }}</div>
       <div class="list-row-actions">
-        <button v-if="isLoan" :disabled="!canExtend" @click="$emit('extend', account)">展延</button>
-        <button v-if="isLoan" @click="$emit('pledge', account)">質押</button>
-        <button v-if="isLoan" @click="$emit('repay', account)">還款</button>
+        <button v-if="isPledge" @click="$emit('pledge', account)">新增質押</button>
         <button @click="$emit('edit', account)">編輯</button>
         <button @click="$emit('toggle-archive', account)">{{ account.isArchived ? '取消封存' : '封存' }}</button>
         <button class="danger" @click="$emit('delete', account)">刪除</button>
@@ -98,13 +112,14 @@ const AccountRowItem = {
 };
 
 const AccountsView = {
-  components: { AccountRowItem, IconPickerField, LoanExtendModal, LoanRepayModal, LoanPledgeModal },
+  components: { AccountRowItem, IconPickerField, LoanPledgeModal, PledgeRowItem, PledgeExtendModal, PledgeRepayModal, PledgeEditModal },
   mixins: [DragSortMixin],
   data() {
     return {
-      extendingLoanId: null, // loan whose 展延 dialog is open
-      repayingLoanId: null, // loan whose 還款 dialog is open
-      pledgingLoanId: null, // loan whose 質押 dialog is open
+      pledgingLoanId: null, // loan whose 新增質押 dialog is open
+      extendingPledgeId: null, // pledged stock whose 展延 dialog is open
+      repayingPledgeId: null, // pledged stock whose 還款 dialog is open
+      editingPledgeId: null, // pledged stock whose terms are being edited
       editingId: null, // null = form closed
       form: this.blankForm(),
       rateFieldsTouched: false, // once the operator edits a rate, market changes stop overwriting it
@@ -131,6 +146,27 @@ const AccountsView = {
     loanAccounts() {
       return this.accounts.filter((a) => a.kind === 'loan');
     },
+    loanTypeLabels() {
+      return Models.LOAN_TYPE_LABELS;
+    },
+    // Accounts an installment can be paid from: anything an ordinary expense
+    // could be charged to.
+    // What an installment loan still needs before it can book anything. Shown
+    // under the form and blocks saving, so a loan can't be saved into a state
+    // where it silently never generates a payment.
+    loanFormError() {
+      const f = this.form;
+      if (f.kind !== 'loan' || f.loanType === 'pledge') return '';
+      if (this.editingId === 'new' && !(Number(f.initialBalance) > 0)) return '請填貸款金額(目前還欠的本金),沒有本金就沒有可還的款';
+      if (!(Number(f.loanInstallments) >= 1)) return '請填分期數(至少 1 期)';
+      if (Number(f.loanPaidInstallments) >= Number(f.loanInstallments)) return '已還期數要小於分期數';
+      if (!f.loanNextDue) return this.editingId === 'new' ? '請填首期還款日' : '請填下次還款日';
+      if (!f.loanPayFromAccountId) return '請選擇扣款帳戶';
+      return '';
+    },
+    payableAccounts() {
+      return Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
+    },
   },
   watch: {
     // Picking a market fills in that market's factory-default rates — a
@@ -155,11 +191,29 @@ const AccountsView = {
     },
   },
   methods: {
+    // The still-pledged stocks of one loan, oldest first.
+    pledgesOf(loanId) {
+      return Store.state.pledges
+        .filter((p) => p.loanAccountId === loanId && !p.isReleased)
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+    },
+    async releaseUnpriced(pledge) {
+      if (!confirm('解除 ' + pledge.ticker + ' 的質押？')) return;
+      await Store.releasePledge(pledge.id);
+    },
+    // A new installment loan starts with sensible answers already filled in,
+    // so the easy path (name, amount, rate, term) can't leave out what the
+    // engine needs: first payment a month from today, paid from the default
+    // account.
     blankForm() {
+      const today = Models.localToday();
+      const payable = Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
+      const payFrom = payable.find((a) => a.isDefault) || payable[0];
       return {
         name: '', kind: 'cash', icon: Models.accountIcon({ kind: 'cash' }), color: '#adb5bd', currency: 'TWD', initialBalance: 0, creditLimit: 0,
         market: 'TW', feeRate: 0, stockTaxRate: 0, etfTaxRate: 0,
-        loanRate: 0, loanInterestFrom: new Date().toISOString().slice(0, 10), loanMaturity: '', loanMaxExtensions: 0,
+        loanType: 'pledge', loanRate: 0, loanInstallments: 12, loanPaidInstallments: 0,
+        loanNextDue: Models.addMonthClamped(today, Number(today.slice(8, 10))), loanPayFromAccountId: payFrom ? payFrom.id : '',
       };
     },
     openNew(kind) {
@@ -192,10 +246,12 @@ const AccountsView = {
         feeRate: Math.round((account.feeRate || 0) * 1000000) / 10000,
         stockTaxRate: Math.round((account.stockTaxRate || 0) * 1000000) / 10000,
         etfTaxRate: Math.round((account.etfTaxRate || 0) * 1000000) / 10000,
+        loanType: account.loanType || 'other',
         loanRate: Math.round((account.loanRate || 0) * 1000000) / 10000,
-        loanInterestFrom: account.loanInterestFrom || new Date().toISOString().slice(0, 10),
-        loanMaturity: account.loanMaturity || '',
-        loanMaxExtensions: account.loanMaxExtensions || 0,
+        loanInstallments: account.loanInstallments || 0,
+        loanPaidInstallments: account.loanPaidInstallments || 0,
+        loanNextDue: account.loanNextDue || '',
+        loanPayFromAccountId: account.loanPayFromAccountId || '',
       };
     },
     cancel() {
@@ -203,6 +259,7 @@ const AccountsView = {
     },
     async save() {
       if (!this.form.name.trim()) return;
+      const isPledgeForm = this.form.loanType === 'pledge';
       const fields = {
         name: this.form.name.trim(),
         kind: this.form.kind,
@@ -215,18 +272,24 @@ const AccountsView = {
         feeRate: this.form.kind === 'brokerage' ? (Number(this.form.feeRate) || 0) / 100 : null,
         stockTaxRate: this.form.kind === 'brokerage' ? (Number(this.form.stockTaxRate) || 0) / 100 : null,
         etfTaxRate: this.form.kind === 'brokerage' ? (Number(this.form.etfTaxRate) || 0) / 100 : null,
-        // loanExtensions is deliberately not here: it starts at 0 in
-        // newAccount and only the 展延 action ever changes it.
-        loanRate: this.form.kind === 'loan' ? (Number(this.form.loanRate) || 0) / 100 : null,
-        loanInterestFrom: this.form.kind === 'loan' ? this.form.loanInterestFrom || null : null,
-        loanMaturity: this.form.kind === 'loan' ? this.form.loanMaturity || null : null,
-        loanMaxExtensions: this.form.kind === 'loan' ? Number(this.form.loanMaxExtensions) || 0 : null,
+        loanType: this.form.kind === 'loan' ? this.form.loanType : null,
+        // A 質押 loan keeps its rate/maturity/extensions on each pledged stock;
+        // every other loan is repaid in installments instead.
+        loanRate: this.form.kind === 'loan' && !isPledgeForm ? (Number(this.form.loanRate) || 0) / 100 : null,
+        loanInstallments: this.form.kind === 'loan' && !isPledgeForm ? Number(this.form.loanInstallments) || 0 : null,
+        loanPaidInstallments: this.form.kind === 'loan' && !isPledgeForm ? Math.max(0, Number(this.form.loanPaidInstallments) || 0) : null,
+        loanNextDue: this.form.kind === 'loan' && !isPledgeForm ? this.form.loanNextDue || null : null,
+        loanPayFromAccountId: this.form.kind === 'loan' && !isPledgeForm ? this.form.loanPayFromAccountId || null : null,
       };
+      let savedId = this.editingId;
       if (this.editingId === 'new') {
-        await Store.addAccount(fields);
+        savedId = (await Store.addAccount(fields)).id;
       } else {
         await Store.updateAccount(this.editingId, fields);
       }
+      // An installment loan may already have payments due (a past first
+      // date), so book them right away instead of waiting for the next launch.
+      if (fields.kind === 'loan') await Store.generateLoanInstallments(savedId);
       this.editingId = null;
     },
     async toggleArchive(account) {
@@ -330,14 +393,23 @@ const AccountsView = {
 
       <section class="panel">
         <div class="view-header"><h3>借款</h3><button class="primary" @click="openNew('loan')">+ 新增</button></div>
-        <p class="muted" style="margin: -4px 0 10px;">借出與還本金請用「轉帳」記,利息在展延或還款時一次結算</p>
-        <AccountRowItem
-          v-for="(a, i) in displayList('loan', loanAccounts)" :key="a.id"
-          :account="a" list-id="loan" :index="i" :dragging="dragId === a.id"
-          @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
-          @extend="extendingLoanId = $event.id" @repay="repayingLoanId = $event.id" @pledge="pledgingLoanId = $event.id"
-          @handle-down="startDrag('loan', loanAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
-        />
+        <p class="muted" style="margin: -4px 0 10px;">質押借款的額度、利率、到期日、展延設在每檔質押股票上;其他借款設定分期數,每月自動記還款</p>
+        <div v-for="(a, i) in displayList('loan', loanAccounts)" :key="a.id">
+          <AccountRowItem
+            :account="a" list-id="loan" :index="i" :dragging="dragId === a.id"
+            @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
+            @pledge="pledgingLoanId = $event.id"
+            @handle-down="startDrag('loan', loanAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
+          />
+          <div v-if="a.loanType === 'pledge'" class="pledge-list">
+            <PledgeRowItem
+              v-for="p in pledgesOf(a.id)" :key="p.id" :pledge="p"
+              @extend="extendingPledgeId = $event.id" @repay="repayingPledgeId = $event.id"
+              @edit="editingPledgeId = $event.id" @release="releaseUnpriced"
+            />
+            <div v-if="pledgesOf(a.id).length === 0" class="empty">還沒有質押的股票,按「新增質押」開始</div>
+          </div>
+        </div>
         <div v-if="loanAccounts.length === 0" class="empty">還沒有借款</div>
       </section>
 
@@ -374,19 +446,36 @@ const AccountsView = {
               </select>
             </label>
             <label v-else>幣別 <input v-model="form.currency" /></label>
-            <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : form.kind === 'loan' ? '目前借款餘額(起始)' : '起始餘額' }}
+            <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : form.kind === 'loan' && form.loanType === 'pledge' ? '目前借款餘額(起始)' : form.kind === 'loan' ? '貸款金額(目前還欠的本金)' : '起始餘額' }}
               <input type="number" v-model="form.initialBalance" />
             </label>
             <label v-if="form.kind === 'credit_card'">信用額度
               <input type="number" v-model="form.creditLimit" />
             </label>
-            <template v-if="form.kind === 'loan'">
+            <label v-if="form.kind === 'loan'">借款類型
+              <select v-model="form.loanType">
+                <option v-for="(label, type) in loanTypeLabels" :key="type" :value="type">{{ label }}</option>
+              </select>
+              <span v-if="form.loanType === 'pledge'" class="field-hint">質押借款的額度、利率、到期日,在新增每檔質押股票時設定</span>
+            </label>
+            <template v-if="form.kind === 'loan' && form.loanType !== 'pledge'">
               <label>年利率(%) <input type="number" step="0.0001" min="0" v-model.number="form.loanRate" /></label>
-              <label>計息起始日 <input type="date" v-model="form.loanInterestFrom" />
-                <span class="field-hint">利息從這天起算;之後借出的金額請記成「借款 → 銀行」的轉帳</span>
+              <label>分期數(總期數) <input type="number" min="1" step="1" v-model.number="form.loanInstallments" />
+                <span class="field-hint">每月一期、本息平均攤還</span>
               </label>
-              <label>到期日 <input type="date" v-model="form.loanMaturity" /></label>
-              <label>最多可展延次數 <input type="number" min="0" step="1" v-model.number="form.loanMaxExtensions" /></label>
+              <label>已還期數 <input type="number" min="0" step="1" v-model.number="form.loanPaidInstallments" />
+                <span class="field-hint">新貸款填 0;已經還了幾期就填幾期,並把下面的日期填成下一次還款日</span>
+              </label>
+              <label>{{ editingId === 'new' ? '首期還款日' : '下次還款日' }} <input type="date" v-model="form.loanNextDue" />
+                <span class="field-hint">之後每個月同一天自動記帳;日期若已過,會立刻補記到今天為止的期數</span>
+              </label>
+              <label>從哪個帳戶扣款
+                <select v-model="form.loanPayFromAccountId">
+                  <option value="">請選擇</option>
+                  <option v-for="a in payableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+                </select>
+                <span class="field-hint">每期會記一筆本金轉帳和一筆「利息」支出,都從這個帳戶扣</span>
+              </label>
             </template>
             <template v-if="form.kind === 'brokerage'">
               <label>手續費率(%) <input type="number" step="0.0001" v-model.number="form.feeRate" @input="rateFieldsTouched = true" />
@@ -398,16 +487,18 @@ const AccountsView = {
               </template>
             </template>
           </div>
+          <p v-if="loanFormError" class="field-hint negative" style="margin: 0 20px 8px;">{{ loanFormError }}</p>
           <div class="modal-actions">
             <button @click="cancel">取消</button>
-            <button class="primary" @click="save">儲存</button>
+            <button class="primary" :disabled="!!loanFormError" @click="save">儲存</button>
           </div>
         </div>
       </div>
 
-      <LoanExtendModal v-if="extendingLoanId" :loan-id="extendingLoanId" @close="extendingLoanId = null" />
-      <LoanRepayModal v-if="repayingLoanId" :loan-id="repayingLoanId" @close="repayingLoanId = null" />
       <LoanPledgeModal v-if="pledgingLoanId" :loan-id="pledgingLoanId" @close="pledgingLoanId = null" />
+      <PledgeExtendModal v-if="extendingPledgeId" :pledge-id="extendingPledgeId" @close="extendingPledgeId = null" />
+      <PledgeRepayModal v-if="repayingPledgeId" :pledge-id="repayingPledgeId" @close="repayingPledgeId = null" />
+      <PledgeEditModal v-if="editingPledgeId" :pledge-id="editingPledgeId" @close="editingPledgeId = null" />
     </div>
   `,
 };

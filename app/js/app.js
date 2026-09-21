@@ -9,6 +9,11 @@ const RootApp = {
   },
   async mounted() {
     await Store.init();
+    // Coming back to the app (a tab left open overnight, a PWA resumed from the
+    // background) books anything that fell due in the meantime.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && Store.state.ready) Store.bookDueItems();
+    });
   },
   components: {
     DashboardView,

@@ -16,6 +16,15 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// Today as the operator's calendar reads it ('YYYY-MM-DD', local time).
+// toISOString() is UTC, which in Taiwan is still *yesterday* between 00:00 and
+// 08:00 — so anything that decides "is this due yet?" must use this instead,
+// or a payment due today isn't booked until mid-morning.
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Seeded once on first launch. Not locked — the user can rename, reorder,
 // archive, or add their own; this is a starting point, not a fixed enum.
 const SEED_CATEGORIES = [
@@ -53,6 +62,15 @@ function isTransferOnlyKind(kind) {
   return kind === 'brokerage' || kind === 'loan';
 }
 
+// What a loan account is for. 質押 (borrowing against pledged shares) carries
+// its terms per pledged stock — amount, rate, maturity, extensions. Every other
+// type is one borrowing repaid in equal monthly installments.
+const LOAN_TYPE_LABELS = { pledge: '質押', credit: '信用貸款', mortgage: '房屋貸款', auto: '汽車貸款', other: '其他' };
+
+function isPledgeLoan(account) {
+  return !!account && account.kind === 'loan' && account.loanType === 'pledge';
+}
+
 function accountIcon(account) {
   return account.icon || DEFAULT_ACCOUNT_ICON[account.kind] || '❔';
 }
@@ -81,15 +99,18 @@ function newAccount(fields) {
     feeRate: isBrokerage ? Number(fields.feeRate) || 0 : null,
     stockTaxRate: isBrokerage ? Number(fields.stockTaxRate) || 0 : null,
     etfTaxRate: isBrokerage ? Number(fields.etfTaxRate) || 0 : null,
-    // A loan account is one borrowing: the current annual rate (a fraction,
-    // like the brokerage rates), the date interest is currently counted
-    // from, when it matures, and how many extensions have been used against
-    // the cap set up front. Interest is settled in one go on repay/extend.
+    // A loan account's type and annual rate (a fraction, like the brokerage
+    // rates); the rate is unused for 質押, which prices each stock itself.
+    loanType: isLoan ? fields.loanType || 'other' : null,
     loanRate: isLoan ? Number(fields.loanRate) || 0 : null,
-    loanInterestFrom: isLoan ? fields.loanInterestFrom || nowIso().slice(0, 10) : null,
-    loanMaturity: isLoan ? fields.loanMaturity || null : null,
-    loanExtensions: isLoan ? Number(fields.loanExtensions) || 0 : null,
-    loanMaxExtensions: isLoan ? Number(fields.loanMaxExtensions) || 0 : null,
+    // An installment loan (everything but 質押) is repaid in equal monthly
+    // payments: how many installments are left, how many have been paid,
+    // the next due date, and the account they are paid from. 質押 keeps its
+    // terms on each pledged stock instead, so these stay empty for it.
+    loanInstallments: isLoan && fields.loanType !== 'pledge' ? Number(fields.loanInstallments) || 0 : null,
+    loanPaidInstallments: isLoan && fields.loanType !== 'pledge' ? Number(fields.loanPaidInstallments) || 0 : null,
+    loanNextDue: isLoan && fields.loanType !== 'pledge' ? fields.loanNextDue || null : null,
+    loanPayFromAccountId: isLoan && fields.loanType !== 'pledge' ? fields.loanPayFromAccountId || null : null,
     sortOrder: fields.sortOrder ?? 0,
     isArchived: false,
     isDefault: fields.isDefault ?? false,
@@ -141,6 +162,11 @@ function newTransaction(fields) {
     // recurring-generated row apart from one entered by hand, without
     // otherwise changing how it behaves (still freely editable/deletable).
     recurringId: fields.recurringId || null,
+    // Likewise for a monthly installment of a loan (store.js's
+    // generateLoanInstallments): both its principal transfer and its interest
+    // expense carry the loan's id, so a payment can be recognised, grouped
+    // and counted as fixed spending.
+    loanId: fields.loanId || null,
     isDeleted: false,
     updatedAt: nowIso(),
   };
@@ -657,36 +683,31 @@ function daysBetween(fromDate, toDate) {
   return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
 }
 
-// Interest a loan account has accrued from its loanInterestFrom up to (not
-// including) asOfDate: outstanding balance x annual rate x days / 365,
-// summed over each stretch between changes to that balance. Every
-// borrow/repay is an ordinary transfer, so the balance at the start of a
-// stretch is just accountBalance over the transactions dated on or before
-// it — no separate principal field to keep in sync. Settled (and the
-// counting date reset) only when the operator repays or extends.
-function accruedInterest(account, transactions, asOfDate) {
-  if (account.kind !== 'loan' || !account.loanRate) return 0;
-  const from = account.loanInterestFrom;
-  if (!from || asOfDate <= from) return 0;
-  const related = transactions.filter(
-    (t) => !t.isDeleted && (t.accountId === account.id || t.toAccountId === account.id)
-  );
-  const changeDates = [...new Set(related.map((t) => t.date).filter((d) => d > from && d < asOfDate))].sort();
-  const bounds = [from, ...changeDates, asOfDate];
-  let total = 0;
-  for (let i = 0; i < bounds.length - 1; i++) {
-    // Models.*, not the bare name — store.js declares its own single-arg
-    // accountBalance that would clobber the global one (see netWorthAsOf).
-    const owed = Math.max(0, Models.accountBalance(account, related.filter((t) => t.date <= bounds[i]), []));
-    total += (owed * account.loanRate * daysBetween(bounds[i], bounds[i + 1])) / 365;
-  }
-  return Math.round(total);
+// One installment of an equal-payment (本息平均攤還) loan: with `remaining`
+// installments left on `balance` at an annual `rate`, interest is the
+// balance x rate/12, and the fixed payment is what amortises the balance to
+// zero over the remaining installments; principal is the rest. Working it
+// out from the *current* balance and remaining count each month means an
+// extra repayment simply lowers the following payments, with no schedule to
+// rebuild. The last installment clears whatever is left.
+function installmentBreakdown(balance, annualRate, remaining) {
+  const owed = Math.max(0, balance);
+  if (remaining <= 0 || owed === 0) return { interest: 0, principal: owed, payment: owed };
+  const r = (annualRate || 0) / 12;
+  const interest = Math.round(owed * r);
+  if (remaining === 1) return { interest, principal: owed, payment: owed + interest };
+  const payment = r > 0 ? (owed * r) / (1 - Math.pow(1 + r, -remaining)) : owed / remaining;
+  const principal = Math.min(owed, Math.max(0, Math.round(payment - interest)));
+  return { interest, principal, payment: principal + interest };
 }
 
-// One block of shares put up as collateral against one loan. Quantity is
-// what is locked, not a value — the app has no live quotes, so a pledge
-// carries no price; its only effect is to take those shares out of what
-// the sell form will let you sell until it is released.
+// One block of shares put up as collateral, and the borrowing made against
+// it: every pledged stock is its own small loan with its own amount, rate,
+// maturity and extensions (brokers price each stock differently). Quantity
+// locks those shares out of what the sell form allows until the pledge is
+// released; `amount` is what is currently borrowed against them, and
+// interest is settled (and interestFrom reset) whenever amount changes or
+// the terms are extended, so it never needs integrating over a changing balance.
 function newPledge(fields) {
   return {
     id: uuid(),
@@ -697,10 +718,23 @@ function newPledge(fields) {
     quantity: Number(fields.quantity),
     date: fields.date,
     note: fields.note || '',
+    amount: Number(fields.amount) || 0,
+    rate: Number(fields.rate) || 0, // annual, a fraction like every other rate
+    interestFrom: fields.interestFrom || fields.date,
+    maturity: fields.maturity || null,
+    extensions: Number(fields.extensions) || 0,
+    maxExtensions: Number(fields.maxExtensions) || 0,
     isReleased: false,
     releasedDate: null,
     updatedAt: nowIso(),
   };
+}
+
+// Interest one pledge has accrued from interestFrom up to (not including)
+// asOfDate: amount x annual rate x days / 365, rounded.
+function pledgeAccruedInterest(pledge, asOfDate) {
+  if (!pledge.amount || !pledge.rate || !pledge.interestFrom || asOfDate <= pledge.interestFrom) return 0;
+  return Math.round((pledge.amount * pledge.rate * daysBetween(pledge.interestFrom, asOfDate)) / 365);
 }
 
 // Directory entries whose company name matches free text an operator once
@@ -885,39 +919,80 @@ function dueOccurrences(recurring, todayStr) {
   return { dates, nextDueDate: cursor, remainingOccurrences: remaining };
 }
 
-// Actual recurring-generated expense per month of one 'YYYY' year, Jan–Dec —
-// what the year view's 固定支出 chart plots. Reads recurringId, so this is
-// real history (a rule created mid-year has zero before it existed, one
-// archived mid-year has zero after), not today's rule list projected
-// backward — the same "trust the ledger, not the current config" approach
-// accountBalance already takes for everything else in this app.
-function monthlyRecurringExpense(transactions, year) {
+// Actual fixed spending per month of one 'YYYY' year, Jan–Dec — what the
+// year view's 固定支出 chart plots, in two parts: `amount`, the expense
+// transactions a recurring rule generated (recurringId), and `loanAmount`,
+// everything paid on loan installments (loanId — principal *and* interest,
+// since this is cash going out, not the income statement). Both read the
+// ledger, so it is real history (a rule created mid-year has zero before it
+// existed) rather than today's configuration projected backward.
+function monthlyFixedExpense(transactions, year) {
   const months = [];
   for (let m = 1; m <= 12; m++) {
-    months.push({ month: m, yearMonth: `${year}-${String(m).padStart(2, '0')}`, amount: 0 });
+    months.push({ month: m, yearMonth: `${year}-${String(m).padStart(2, '0')}`, amount: 0, loanAmount: 0 });
   }
   const byMonth = new Map(months.map((row) => [row.yearMonth, row]));
   for (const t of transactions) {
-    if (t.isDeleted || t.type !== 'expense' || !t.recurringId) continue;
+    if (t.isDeleted) continue;
     const row = byMonth.get(t.date.slice(0, 7));
-    if (row) row.amount += t.amount;
+    if (!row) continue;
+    if (t.loanId) row.loanAmount += t.amount;
+    else if (t.type === 'expense' && t.recurringId) row.amount += t.amount;
   }
   return months;
 }
 
-// Single-series bar geometry over the same 300x100 viewBox the other
-// dashboard charts use — simpler than buildTrendChart since there is only
-// one value per month (no income/expense pairing, no net line) and every
-// amount is >= 0, so the baseline is always just the bottom edge.
-function buildRecurringExpenseChart(months) {
-  const maxValue = Math.max(1, ...months.map((m) => m.amount));
+// Stacked-bar geometry over the same 300x100 viewBox the other dashboard
+// charts use: rule spending at the bottom of each month's bar, loan payments
+// stacked on top. Every value is >= 0, so the baseline is the bottom edge.
+function buildFixedExpenseChart(months) {
+  const maxValue = Math.max(1, ...months.map((m) => m.amount + m.loanAmount));
   const colWidth = 300 / months.length;
   const barWidth = colWidth * 0.5;
   const bars = months.map((m, i) => {
-    const h = (m.amount / maxValue) * 100;
-    return { month: m.month, x: colWidth * i + (colWidth - barWidth) / 2, y: 100 - h, width: barWidth, height: h };
+    const recurringH = (m.amount / maxValue) * 100;
+    const loanH = (m.loanAmount / maxValue) * 100;
+    return {
+      month: m.month,
+      x: colWidth * i + (colWidth - barWidth) / 2,
+      width: barWidth,
+      recurring: { y: 100 - recurringH, height: recurringH },
+      loan: { y: 100 - recurringH - loanH, height: loanH },
+    };
   });
   return { bars };
+}
+
+// Splits a day's (or any) transaction list into loan installment payments
+// and everything else. An installment is stored as two rows sharing a loan
+// and a date — the principal transfer and the interest expense — which read
+// as one payment, so they are folded together here: principal, interest and
+// the total paid, with the underlying rows kept for editing.
+function splitLoanPayments(transactions) {
+  const others = [];
+  const byKey = new Map();
+  const payments = [];
+  for (const t of transactions) {
+    if (!t.loanId) { others.push(t); continue; }
+    const key = t.loanId + '|' + t.date;
+    let p = byKey.get(key);
+    if (!p) {
+      p = { key, loanId: t.loanId, date: t.date, principal: 0, interest: 0, total: 0, label: '', items: [] };
+      byKey.set(key, p);
+      payments.push(p);
+    }
+    if (t.type === 'transfer') p.principal += t.amount;
+    else p.interest += t.amount;
+    p.total += t.amount;
+    p.items.push(t);
+    // The principal row's note is "<loan> 第 n/N 期 本金"; failing that, the
+    // interest row's is "<loan> 第 n/N 期 利息 ...".
+    const note = t.note || '';
+    if (t.type === 'transfer' && note.endsWith(' 本金')) p.label = note.slice(0, -' 本金'.length);
+    else if (!p.label && note.includes(' 利息 ')) p.label = note.split(' 利息 ')[0];
+  }
+  for (const p of payments) p.items.sort((a, b) => (a.type === 'transfer' ? -1 : 1) - (b.type === 'transfer' ? -1 : 1));
+  return { payments, others };
 }
 
 // A plain, versioned snapshot of every store — one shape both the export
@@ -943,6 +1018,7 @@ function buildBackup(tables) {
 window.Models = {
   uuid,
   nowIso,
+  localToday,
   SEED_CATEGORIES,
   buildBackup,
   newAccount,
@@ -972,8 +1048,12 @@ window.Models = {
   portfolioBreakdown,
   netWorthTrend,
   accountHoldingsCost,
-  accruedInterest,
+  installmentBreakdown,
+  addMonthClamped,
   newPledge,
+  pledgeAccruedInterest,
+  LOAN_TYPE_LABELS,
+  isPledgeLoan,
   suggestTickerCodes,
   heldQuantityOf,
   pledgedQuantityOf,
@@ -982,8 +1062,9 @@ window.Models = {
   buildNetWorthChart,
   newRecurring,
   dueOccurrences,
-  monthlyRecurringExpense,
-  buildRecurringExpenseChart,
+  monthlyFixedExpense,
+  buildFixedExpenseChart,
+  splitLoanPayments,
   groupTransactionsByCategory,
   groupInvestmentsByTicker,
 };

@@ -102,6 +102,47 @@ const TransactionCategoryGroupList = {
   `,
 };
 
+// One monthly loan installment as the operator thinks of it — a single
+// payment — though it is stored as two rows (the principal transfer and the
+// interest expense, see Models.splitLoanPayments). Shows the total with the
+// split underneath, and expands to those two rows for editing or deleting.
+const LoanPaymentRow = {
+  components: { TransactionRowItem },
+  props: { payment: { type: Object, required: true } },
+  emits: ['edit', 'remove'],
+  data() {
+    return { open: false };
+  },
+  computed: {
+    title() {
+      if (this.payment.label) return this.payment.label;
+      const loan = Store.state.accounts.find((a) => a.id === this.payment.loanId);
+      return loan ? loan.name : '貸款還款';
+    },
+  },
+  methods: {
+    fmt(n) {
+      return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+    },
+  },
+  template: `
+    <div>
+      <div class="list-row clickable" @click="open = !open">
+        <span class="icon-badge" style="background: #e09f3e30;">🏦</span>
+        <div class="list-row-main">
+          <div class="list-row-title">{{ title }}</div>
+          <div class="list-row-sub">本金 {{ fmt(payment.principal) }} + 利息 {{ fmt(payment.interest) }}</div>
+        </div>
+        <div class="list-row-amount negative">-{{ fmt(payment.total) }}</div>
+        <span class="expand-arrow" :class="{ open }">›</span>
+      </div>
+      <template v-if="open">
+        <TransactionRowItem v-for="t in payment.items" :key="t.id" :transaction="t" @edit="$emit('edit', $event)" @remove="$emit('remove', $event)" />
+      </template>
+    </div>
+  `,
+};
+
 const TransactionFormModal = {
   components: { CalculatorField },
   props: {

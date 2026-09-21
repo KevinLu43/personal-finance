@@ -38,6 +38,39 @@ async function loadAll() {
   state.recurringTransactions = recurringTransactions;
   state.pledges = pledges;
   await migrateLabelSortOrder();
+  await migrateLoanTypes();
+}
+
+// One-time upgrade for loans and pledges written before loan types and
+// per-stock terms existed. A loan that already has pledges was a 質押 loan;
+// any other was a plain one. A legacy pledge carried no amount, so it starts
+// at 0 (the list flags it) and inherits the loan's old rate/maturity/extension
+// cap for the operator to correct. Safe to run again: it only touches records
+// that still lack the new fields.
+async function migrateLoanTypes() {
+  for (let i = 0; i < state.accounts.length; i++) {
+    const a = state.accounts[i];
+    if (a.kind !== 'loan' || a.loanType) continue;
+    const updated = { ...a, loanType: state.pledges.some((p) => p.loanAccountId === a.id) ? 'pledge' : 'other' };
+    await Db.put('accounts', updated);
+    state.accounts[i] = updated;
+  }
+  for (let i = 0; i < state.pledges.length; i++) {
+    const p = state.pledges[i];
+    if (p.amount !== undefined) continue;
+    const loan = state.accounts.find((a) => a.id === p.loanAccountId);
+    const updated = {
+      ...p,
+      amount: 0,
+      rate: (loan && loan.loanRate) || 0,
+      interestFrom: (loan && loan.loanInterestFrom) || p.date,
+      maturity: (loan && loan.loanMaturity) || null,
+      extensions: 0,
+      maxExtensions: (loan && loan.loanMaxExtensions) || 0,
+    };
+    await Db.put('pledges', updated);
+    state.pledges[i] = updated;
+  }
 }
 
 // One-time upgrade for labels written before sortOrder existed (they sorted
@@ -65,10 +98,19 @@ async function seedIfEmpty() {
   }
 }
 
+// Books whatever has come due since the last time it ran: recurring rules and
+// loan installments. Idempotent, so it is safe to call whenever the app comes
+// back to the foreground — a phone PWA can stay open for days, and without
+// this a payment due today wouldn't appear until the next cold start.
+async function bookDueItems() {
+  await generateDueRecurringTransactions();
+  await generateDueLoanInstallments();
+}
+
 async function init() {
   await seedIfEmpty();
   await loadAll();
-  await generateDueRecurringTransactions();
+  await bookDueItems();
   state.ready = true;
 }
 
@@ -141,50 +183,77 @@ async function ensureInterestCategory() {
   return addCategory({ name: '利息', kind: 'expense', icon: '💸', color: '#9c6644' });
 }
 
-async function settleLoanInterest(loan, date, payFromAccountId) {
-  const interest = Models.accruedInterest(loan, state.transactions, date);
+// Books one interest payment as an expense on the chosen account. Shared by
+// a whole loan's settlement and by a single pledged stock's, which differ
+// only in how the amount is worked out and how the note names it.
+async function bookInterest(label, interest, fromDate, toDate, payFromAccountId, loanId) {
   if (interest <= 0) return;
   const category = await ensureInterestCategory();
   await addTransaction({
-    date,
+    date: toDate,
     type: 'expense',
     amount: interest,
     accountId: payFromAccountId,
     categoryId: category.id,
-    note: `${loan.name} 利息 ${loan.loanInterestFrom} ~ ${date}`,
+    note: `${label} 利息 ${fromDate} ~ ${toDate}`,
+    loanId,
   });
 }
 
-// Extending settles the interest owed at the old rate, then restarts
-// counting from the extension date at the newly entered rate — a rate
-// change never has to be applied retroactively.
-async function extendLoan(accountId, { date, newMaturity, newRate, payFromAccountId }) {
-  const loan = state.accounts.find((a) => a.id === accountId);
-  if (!loan || loan.kind !== 'loan' || loan.loanExtensions >= loan.loanMaxExtensions) return;
-  await settleLoanInterest(loan, date, payFromAccountId);
-  await updateAccount(accountId, {
-    loanRate: newRate,
-    loanMaturity: newMaturity,
-    loanExtensions: loan.loanExtensions + 1,
-    loanInterestFrom: date,
-  });
+// A loan that isn't 質押 is repaid in monthly installments. Each one that has
+// come due (on or before today) is booked automatically: the principal as a
+// transfer from the paying account into the loan, and the interest as an
+// expense on that account — the same two ledger entries a hand-made repayment
+// would be. The amounts are worked out from the loan's current balance and
+// the installments still to go (Models.installmentBreakdown), so an extra
+// repayment made by transfer just makes the following payments smaller.
+async function generateLoanInstallments(loanId) {
+  let loan = state.accounts.find((a) => a.id === loanId);
+  if (!loan || loan.kind !== 'loan' || loan.loanType === 'pledge') return;
+  if (!loan.loanInstallments || !loan.loanNextDue || !loan.loanPayFromAccountId) return;
+  if (!state.accounts.some((a) => a.id === loan.loanPayFromAccountId)) return;
+  const today = Models.localToday();
+  const anchorDay = Number(loan.loanNextDue.slice(8, 10));
+  let guard = 0;
+  while (loan.loanPaidInstallments < loan.loanInstallments && loan.loanNextDue <= today && guard < 600) {
+    const due = loan.loanNextDue;
+    const balance = Models.accountBalance(loan, state.transactions.filter((t) => t.date <= due), []);
+    if (balance <= 0) {
+      // Nothing owed. Before any payment that just means the money hasn't been
+      // borrowed yet, so leave the installments unspent rather than burn them
+      // at zero; after payments it means the loan was paid off early, so the
+      // remaining installments are done.
+      if (loan.loanPaidInstallments > 0) await updateAccount(loan.id, { loanPaidInstallments: loan.loanInstallments });
+      break;
+    }
+    const remaining = loan.loanInstallments - loan.loanPaidInstallments;
+    const { interest, principal } = Models.installmentBreakdown(balance, loan.loanRate, remaining);
+    const label = `${loan.name} 第 ${loan.loanPaidInstallments + 1}/${loan.loanInstallments} 期`;
+    if (principal > 0) {
+      await addTransaction({
+        date: due,
+        type: 'transfer',
+        amount: principal,
+        accountId: loan.loanPayFromAccountId,
+        toAccountId: loan.id,
+        note: `${label} 本金`,
+        loanId: loan.id,
+      });
+    }
+    await bookInterest(label, interest, due, due, loan.loanPayFromAccountId, loan.id);
+    await updateAccount(loan.id, {
+      loanPaidInstallments: loan.loanPaidInstallments + 1,
+      loanNextDue: Models.addMonthClamped(due, anchorDay),
+    });
+    loan = state.accounts.find((a) => a.id === loanId);
+    guard++;
+  }
 }
 
-async function repayLoan(accountId, { date, amount, fromAccountId }) {
-  const loan = state.accounts.find((a) => a.id === accountId);
-  if (!loan || loan.kind !== 'loan') return;
-  await settleLoanInterest(loan, date, fromAccountId);
-  await addTransaction({
-    date,
-    type: 'transfer',
-    amount,
-    accountId: fromAccountId,
-    toAccountId: accountId,
-    note: `${loan.name} 還款`,
-  });
-  await updateAccount(accountId, { loanInterestFrom: date });
-  // Nothing left owed means nothing left to secure.
-  if (Models.accountBalance(loan, state.transactions) <= 0) await releaseLoanPledges(accountId, date);
+async function generateDueLoanInstallments() {
+  for (const a of state.accounts.filter((x) => x.kind === 'loan' && x.loanType !== 'pledge')) {
+    await generateLoanInstallments(a.id);
+  }
 }
 
 // Rewrites a ticker on every trade and pledge of one market — for trades
@@ -219,6 +288,10 @@ function freeQuantityInAccount(accountId, market, ticker) {
   );
 }
 
+// Pledging a stock is also borrowing against it: the pledge records the
+// amount, rate and maturity, and when an amount is given the money is booked
+// as a transfer from the loan account into the chosen receiving account, so
+// the loan's owed balance (accountBalance) stays the one source of truth.
 async function addPledge(fields) {
   const account = state.accounts.find((a) => a.id === fields.accountId);
   if (!account || account.kind !== 'brokerage') return null;
@@ -227,7 +300,56 @@ async function addPledge(fields) {
   const pledge = Models.newPledge({ ...fields, market });
   await Db.put('pledges', pledge);
   state.pledges.push(pledge);
+  if (pledge.amount > 0 && fields.receiveAccountId) {
+    await addTransaction({
+      date: pledge.date,
+      type: 'transfer',
+      amount: pledge.amount,
+      accountId: pledge.loanAccountId,
+      toAccountId: fields.receiveAccountId,
+      note: `質押 ${pledge.ticker} 借款`,
+    });
+  }
   return pledge;
+}
+
+async function updatePledge(id, fields) {
+  const idx = state.pledges.findIndex((p) => p.id === id);
+  if (idx === -1) return;
+  const updated = { ...state.pledges[idx], ...fields, updatedAt: Models.nowIso() };
+  await Db.put('pledges', updated);
+  state.pledges[idx] = updated;
+}
+
+// Extending one pledged stock settles the interest at its old rate, then
+// counts from the extension date at the newly entered rate.
+async function extendPledge(id, { date, newMaturity, newRate, payFromAccountId }) {
+  const p = state.pledges.find((x) => x.id === id);
+  if (!p || p.isReleased || p.extensions >= p.maxExtensions) return;
+  const loan = state.accounts.find((a) => a.id === p.loanAccountId);
+  await bookInterest(`${loan ? loan.name : '質押借款'} ${p.ticker}`, Models.pledgeAccruedInterest(p, date), p.interestFrom, date, payFromAccountId);
+  await updatePledge(id, { rate: newRate, maturity: newMaturity, extensions: p.extensions + 1, interestFrom: date });
+}
+
+// Repays some or all of what one pledged stock borrowed: interest first, then
+// the principal as a transfer back into the loan. Paying it all off releases
+// the stock (its shares become sellable again).
+async function repayPledge(id, { date, amount, fromAccountId }) {
+  const p = state.pledges.find((x) => x.id === id);
+  if (!p || p.isReleased) return;
+  const loan = state.accounts.find((a) => a.id === p.loanAccountId);
+  const label = `${loan ? loan.name : '質押借款'} ${p.ticker}`;
+  await bookInterest(label, Models.pledgeAccruedInterest(p, date), p.interestFrom, date, fromAccountId);
+  const pay = Math.min(Number(amount) || 0, p.amount);
+  if (pay > 0) {
+    await addTransaction({ date, type: 'transfer', amount: pay, accountId: fromAccountId, toAccountId: p.loanAccountId, note: `${label} 還款` });
+  }
+  const remaining = p.amount - pay;
+  await updatePledge(id, {
+    amount: remaining,
+    interestFrom: date,
+    ...(remaining <= 0 ? { isReleased: true, releasedDate: date } : {}),
+  });
 }
 
 async function releasePledge(id, date) {
@@ -236,12 +358,6 @@ async function releasePledge(id, date) {
   const updated = { ...state.pledges[idx], isReleased: true, releasedDate: date || Models.nowIso().slice(0, 10), updatedAt: Models.nowIso() };
   await Db.put('pledges', updated);
   state.pledges[idx] = updated;
-}
-
-async function releaseLoanPledges(loanAccountId, date) {
-  for (const p of state.pledges.filter((x) => x.loanAccountId === loanAccountId && !x.isReleased)) {
-    await releasePledge(p.id, date);
-  }
 }
 
 // What the sell form may sell: everything held in the market for that
@@ -457,7 +573,7 @@ async function deleteRecurring(id) {
 // one — deleting the rule later still leaves the transaction untouched.
 async function generateDueForOne(r) {
   if (r.isArchived) return;
-  const today = Models.nowIso().slice(0, 10);
+  const today = Models.localToday();
   const { dates, nextDueDate, remainingOccurrences } = Models.dueOccurrences(r, today);
   if (dates.length === 0) return;
   for (const date of dates) {
@@ -504,8 +620,8 @@ function accountBalance(account) {
   return Models.accountBalance(account, state.transactions, state.investments);
 }
 
-function accruedInterest(account, asOfDate) {
-  return Models.accruedInterest(account, state.transactions, asOfDate);
+function pledgeAccruedInterest(pledge, asOfDate) {
+  return Models.pledgeAccruedInterest(pledge, asOfDate);
 }
 
 function accountHoldingsCost(account) {
@@ -528,8 +644,8 @@ function netWorthTrend(endYearMonth, monthCount) {
   return Models.netWorthTrend(state.accounts, state.transactions, state.investments, endYearMonth, monthCount);
 }
 
-function monthlyRecurringExpense(year) {
-  return Models.monthlyRecurringExpense(state.transactions, year);
+function monthlyFixedExpense(year) {
+  return Models.monthlyFixedExpense(state.transactions, year);
 }
 
 function dailyTotals(yearMonth) {
@@ -566,12 +682,15 @@ window.Store = {
   activeCategories,
   accountBalance,
   accountHoldingsCost,
-  accruedInterest,
-  extendLoan,
-  repayLoan,
+  generateLoanInstallments,
+  bookDueItems,
   renameTicker,
   freeQuantityInAccount,
   addPledge,
+  updatePledge,
+  extendPledge,
+  repayPledge,
+  pledgeAccruedInterest,
   releasePledge,
   sellableQuantity,
   pledgedQuantity,
@@ -579,7 +698,7 @@ window.Store = {
   yearlySummary,
   monthlyTrend,
   netWorthTrend,
-  monthlyRecurringExpense,
+  monthlyFixedExpense,
   dailyTotals,
   addInvestment,
   updateInvestment,

@@ -108,26 +108,42 @@ const DashboardView = {
       if (this.viewMode !== 'month') return [];
       return Models.budgetProgress(Store.state.categories, this.monthSummary.categoryBreakdown);
     },
-    // This month's known fixed-cost total — the sum of this period's expense
-    // transactions that a recurring rule actually generated (recurringId
-    // set), not a projection from today's rule list. Month-mode only, same
-    // as budgetProgress above; the year view gets its own chart instead.
+    // This month's rule spending — the sum of this period's expense
+    // transactions a recurring rule actually generated (recurringId set), not a
+    // projection from today's rule list. Month-mode only, same as
+    // budgetProgress above; the year view gets its own chart instead.
     recurringExpenseTotal() {
       if (this.viewMode !== 'month') return 0;
       return this.periodExpenseTransactions
         .filter((t) => t.recurringId)
         .reduce((sum, t) => sum + t.amount, 0);
     },
-    // Year mode's 固定支出 chart: actual recurring-generated expense per
-    // month of the selected year, Jan–Dec.
-    yearlyRecurringExpenseMonths() {
-      return Store.monthlyRecurringExpense(this.year);
+    // What was paid on loan installments this month, principal *and* interest:
+    // the 固定支出 card is "money that goes out every month regardless", so
+    // unlike 支出 (which only sees the interest, since repaying principal isn't
+    // spending) it counts both.
+    loanPaymentTotal() {
+      if (this.viewMode !== 'month') return 0;
+      return Store.state.transactions
+        .filter((t) => !t.isDeleted && t.loanId && t.date.startsWith(this.periodPrefix))
+        .reduce((sum, t) => sum + t.amount, 0);
     },
-    recurringExpenseChart() {
-      return Models.buildRecurringExpenseChart(this.yearlyRecurringExpenseMonths);
+    fixedExpenseTotal() {
+      return this.recurringExpenseTotal + this.loanPaymentTotal;
+    },
+    // Year mode's 固定支出 chart: rule spending and loan payments per month
+    // of the selected year, Jan–Dec, stacked.
+    yearlyFixedExpenseMonths() {
+      return Store.monthlyFixedExpense(this.year);
+    },
+    fixedExpenseChart() {
+      return Models.buildFixedExpenseChart(this.yearlyFixedExpenseMonths);
     },
     recurringExpenseYearTotal() {
-      return this.yearlyRecurringExpenseMonths.reduce((sum, m) => sum + m.amount, 0);
+      return this.yearlyFixedExpenseMonths.reduce((sum, m) => sum + m.amount, 0);
+    },
+    loanPaymentYearTotal() {
+      return this.yearlyFixedExpenseMonths.reduce((sum, m) => sum + m.loanAmount, 0);
     },
     // Same period, expense-only transactions — the input labelBreakdown
     // needs and the same set categoryLabelBreakdown/labelNoteBreakdown pick
@@ -394,8 +410,9 @@ const DashboardView = {
           <div class="kpi-value">{{ fmt(activeSummary.net) }}</div>
         </div>
         <div v-if="viewMode === 'month'" class="kpi-card expense">
-          <div class="kpi-label">固定支出</div>
-          <div class="kpi-value">{{ fmt(recurringExpenseTotal) }}</div>
+          <div class="kpi-label">固定支出(含貸款本金)</div>
+          <div class="kpi-value">{{ fmt(fixedExpenseTotal) }}</div>
+          <div class="kpi-sub">規則 {{ fmt(recurringExpenseTotal) }} · 貸款 {{ fmt(loanPaymentTotal) }}</div>
         </div>
       </div>
 
@@ -438,12 +455,21 @@ const DashboardView = {
       </section>
 
       <section v-if="viewMode === 'year'" class="panel span-2">
-        <h3>固定支出<span class="muted"> · {{ year }} 年共 {{ fmt(recurringExpenseYearTotal) }}</span></h3>
+        <div class="view-header">
+          <h3>固定支出<span class="muted"> · {{ year }} 年共 {{ fmt(recurringExpenseYearTotal + loanPaymentYearTotal) }}(貸款含本金)</span></h3>
+          <div class="trend-legend">
+            <span class="legend-item"><span class="legend-dot expense"></span>規則 {{ fmt(recurringExpenseYearTotal) }}</span>
+            <span class="legend-item"><span class="legend-dot loan"></span>貸款 {{ fmt(loanPaymentYearTotal) }}</span>
+          </div>
+        </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
-          <rect v-for="b in recurringExpenseChart.bars" :key="b.month" :x="b.x" :y="b.y" :width="b.width" :height="b.height" fill="var(--expense)" />
+          <template v-for="b in fixedExpenseChart.bars" :key="b.month">
+            <rect :x="b.x" :y="b.recurring.y" :width="b.width" :height="b.recurring.height" fill="var(--expense)" />
+            <rect :x="b.x" :y="b.loan.y" :width="b.width" :height="b.loan.height" fill="var(--warning)" />
+          </template>
         </svg>
         <div class="trend-labels">
-          <span v-for="b in recurringExpenseChart.bars" :key="'re-' + b.month">{{ b.month }}月</span>
+          <span v-for="b in fixedExpenseChart.bars" :key="'re-' + b.month">{{ b.month }}月</span>
         </div>
       </section>
 
