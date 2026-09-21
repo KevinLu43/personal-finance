@@ -615,7 +615,9 @@ const DashboardView = {
         </div>
       </section>
 
-      <!-- Year view pairs 逐月明細 with 資產總覽; month view leaves 資產總覽 free to pair with 預算. -->
+      <!-- Month view flows its panels through the two-column grid (the wrappers are
+           display: contents), so a missing optional panel like 預算 or the card
+           breakdowns never leaves a lone half-empty row; year view keeps the pairs. -->
       <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
       <section v-if="viewMode === 'year'" class="panel">
         <h3>逐月明細</h3>
@@ -657,96 +659,8 @@ const DashboardView = {
         </div>
       </section>
       </div>
-      </div>
 
-      <div class="panel-pair">
-      <section v-if="viewMode === 'month'" class="panel">
-        <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
-        <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
-        <template v-else>
-          <svg viewBox="0 0 100 100" class="donut-chart">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-            <circle
-              v-for="(seg, i) in fixedExpenseDonutSegments" :key="i"
-              cx="50" cy="50" r="40" fill="none"
-              :stroke="seg.color" stroke-width="14"
-              :stroke-dasharray="seg.dash + ' ' + seg.gap"
-              :stroke-dashoffset="seg.dashOffset"
-              transform="rotate(-90 50 50)"
-            />
-          </svg>
-          <div v-for="row in fixedExpenseRows" :key="row.key" class="bar-row">
-            <span class="legend-swatch" :style="{ background: row.color }"></span>
-            <span class="bar-name">{{ row.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
-            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
-          </div>
-        </template>
-      </section>
-
-      <section v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
-        <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in incomeDonutSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in activeSummary.incomeCategoryBreakdown" :key="row.category.id" class="bar-row">
-          <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
-        </div>
-      </section>
-      </div>
-
-      <div class="panel-pair">
-      <section v-if="creditCardDebtBreakdown.length" class="panel">
-        <h3>信用卡欠款<span class="muted"> · 共 {{ fmt(creditCardDebtTotal) }}</span></h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in creditCardDebtSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in creditCardDebtBreakdown" :key="row.category.name" class="bar-row">
-          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
-        </div>
-      </section>
-
-      <section v-if="creditCardSpendBreakdown.length" class="panel">
-        <h3>{{ viewMode === 'year' ? '全年信用卡刷卡' : '本月信用卡刷卡' }}<span class="muted"> · 共 {{ fmt(creditCardSpendTotal) }}</span></h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in creditCardSpendSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in creditCardSpendBreakdown" :key="row.category.name" class="bar-row">
-          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardSpendPercent(row.amount) }}</span>
-        </div>
-      </section>
-      </div>
-
-      <div class="panel-pair">
+      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
       <section class="panel">
         <h3>{{ viewMode === 'year' ? '全年分類支出' : '分類支出' }}</h3>
         <div v-if="activeSummary.categoryBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有紀錄' : '這個月還沒有紀錄' }}</div>
@@ -806,7 +720,94 @@ const DashboardView = {
       </section>
       </div>
 
-      <section class="panel">
+      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
+      <section v-if="viewMode === 'month'" class="panel">
+        <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
+        <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
+        <template v-else>
+          <svg viewBox="0 0 100 100" class="donut-chart">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+            <circle
+              v-for="(seg, i) in fixedExpenseDonutSegments" :key="i"
+              cx="50" cy="50" r="40" fill="none"
+              :stroke="seg.color" stroke-width="14"
+              :stroke-dasharray="seg.dash + ' ' + seg.gap"
+              :stroke-dashoffset="seg.dashOffset"
+              transform="rotate(-90 50 50)"
+            />
+          </svg>
+          <div v-for="row in fixedExpenseRows" :key="row.key" class="bar-row">
+            <span class="legend-swatch" :style="{ background: row.color }"></span>
+            <span class="bar-name">{{ row.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
+          </div>
+        </template>
+      </section>
+
+      <section v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
+        <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
+        <svg viewBox="0 0 100 100" class="donut-chart">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+          <circle
+            v-for="(seg, i) in incomeDonutSegments" :key="i"
+            cx="50" cy="50" r="40" fill="none"
+            :stroke="seg.color" stroke-width="14"
+            :stroke-dasharray="seg.dash + ' ' + seg.gap"
+            :stroke-dashoffset="seg.dashOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div v-for="row in activeSummary.incomeCategoryBreakdown" :key="row.category.id" class="bar-row">
+          <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
+          <span class="bar-name">{{ row.category.name }}</span>
+          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
+        </div>
+      </section>
+      </div>
+
+      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
+      <section v-if="creditCardDebtBreakdown.length" class="panel">
+        <h3>信用卡欠款<span class="muted"> · 共 {{ fmt(creditCardDebtTotal) }}</span></h3>
+        <svg viewBox="0 0 100 100" class="donut-chart">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+          <circle
+            v-for="(seg, i) in creditCardDebtSegments" :key="i"
+            cx="50" cy="50" r="40" fill="none"
+            :stroke="seg.color" stroke-width="14"
+            :stroke-dasharray="seg.dash + ' ' + seg.gap"
+            :stroke-dashoffset="seg.dashOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div v-for="row in creditCardDebtBreakdown" :key="row.category.name" class="bar-row">
+          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+          <span class="bar-name">{{ row.category.name }}</span>
+          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
+        </div>
+      </section>
+
+      <section v-if="creditCardSpendBreakdown.length" class="panel">
+        <h3>{{ viewMode === 'year' ? '全年信用卡刷卡' : '本月信用卡刷卡' }}<span class="muted"> · 共 {{ fmt(creditCardSpendTotal) }}</span></h3>
+        <svg viewBox="0 0 100 100" class="donut-chart">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+          <circle
+            v-for="(seg, i) in creditCardSpendSegments" :key="i"
+            cx="50" cy="50" r="40" fill="none"
+            :stroke="seg.color" stroke-width="14"
+            :stroke-dasharray="seg.dash + ' ' + seg.gap"
+            :stroke-dashoffset="seg.dashOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div v-for="row in creditCardSpendBreakdown" :key="row.category.name" class="bar-row">
+          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+          <span class="bar-name">{{ row.category.name }}</span>
+          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardSpendPercent(row.amount) }}</span>
+        </div>
+      </section>
+      </div>
+
+      <section class="panel span-2">
         <h3>記帳明細</h3>
 
         <div class="search-controls">
