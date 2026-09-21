@@ -652,14 +652,20 @@ function evaluateExpression(expr) {
 
 // Per-day expense/income totals for one 'YYYY-MM' month, keyed by day number
 // (1-31). Drives the calendar view's per-cell amount without the view doing
-// its own filtering/aggregation.
+// its own filtering/aggregation. Transfers are left out, with one exception:
+// a loan installment's principal (stored as a transfer into the loan) is money
+// that really left that day, so it counts as outgoing here — otherwise the
+// cell would show only the installment's interest while the day's list below
+// shows the whole payment. The monthly 支出 summary is unaffected: repaying
+// principal isn't spending.
 function dailyTotals(transactions, yearMonth) {
   const byDay = new Map();
   for (const t of transactions) {
-    if (t.isDeleted || t.type === 'transfer' || !t.date.startsWith(yearMonth)) continue;
+    const isLoanPrincipal = t.type === 'transfer' && !!t.loanId;
+    if (t.isDeleted || (t.type === 'transfer' && !isLoanPrincipal) || !t.date.startsWith(yearMonth)) continue;
     const day = Number(t.date.slice(8, 10));
     const row = byDay.get(day) || { expense: 0, income: 0 };
-    if (t.type === 'expense') row.expense += t.amount;
+    if (t.type === 'expense' || isLoanPrincipal) row.expense += t.amount;
     else row.income += t.amount;
     byDay.set(day, row);
   }
