@@ -108,28 +108,20 @@ const DashboardView = {
       if (this.viewMode !== 'month') return [];
       return Models.budgetProgress(Store.state.categories, this.monthSummary.categoryBreakdown);
     },
-    // This month's rule spending — the sum of this period's expense
-    // transactions a recurring rule actually generated (recurringId set), not a
-    // projection from today's rule list. Month-mode only, same as
-    // budgetProgress above; the year view gets its own chart instead.
-    recurringExpenseTotal() {
-      if (this.viewMode !== 'month') return 0;
-      return this.periodExpenseTransactions
-        .filter((t) => t.recurringId)
-        .reduce((sum, t) => sum + t.amount, 0);
-    },
-    // What was paid on loan installments this month, principal *and* interest:
-    // the 固定支出 card is "money that goes out every month regardless", so
-    // unlike 支出 (which only sees the interest, since repaying principal isn't
-    // spending) it counts both.
-    loanPaymentTotal() {
-      if (this.viewMode !== 'month') return 0;
-      return Store.state.transactions
-        .filter((t) => !t.isDeleted && t.loanId && t.date.startsWith(this.periodPrefix))
-        .reduce((sum, t) => sum + t.amount, 0);
+    // Month mode's 固定支出: every recurring rule and every loan that was paid
+    // this month as its own line, charted as a donut. Loan payments count in
+    // full — principal *and* interest — since this is money that goes out
+    // every month regardless; unlike 支出 (which only sees the interest, because
+    // repaying principal isn't spending).
+    fixedExpenseRows() {
+      if (this.viewMode !== 'month') return [];
+      return Models.fixedExpenseBreakdown(Store.state.transactions, this.periodPrefix, Store.state.categories, Store.state.accounts);
     },
     fixedExpenseTotal() {
-      return this.recurringExpenseTotal + this.loanPaymentTotal;
+      return this.fixedExpenseRows.reduce((sum, row) => sum + row.amount, 0);
+    },
+    fixedExpenseDonutSegments() {
+      return Models.buildDonutSegments(this.fixedExpenseRows);
     },
     // Year mode's 固定支出 chart: rule spending and loan payments per month
     // of the selected year, Jan–Dec, stacked.
@@ -319,6 +311,9 @@ const DashboardView = {
     fmtCreditCardSpendPercent(amount) {
       return this.creditCardSpendTotal > 0 ? (amount / this.creditCardSpendTotal * 100).toFixed(1) + '%' : '0%';
     },
+    fmtFixedPercent(amount) {
+      return this.fixedExpenseTotal > 0 ? (amount / this.fixedExpenseTotal * 100).toFixed(1) + '%' : '0%';
+    },
     fmtCategoryPercent(amount) {
       return this.categoryBreakdownTotal > 0 ? (amount / this.categoryBreakdownTotal * 100).toFixed(1) + '%' : '0%';
     },
@@ -409,11 +404,6 @@ const DashboardView = {
           <div class="kpi-label">{{ viewMode === 'year' ? '全年結餘' : '結餘' }}</div>
           <div class="kpi-value">{{ fmt(activeSummary.net) }}</div>
         </div>
-        <div v-if="viewMode === 'month'" class="kpi-card expense">
-          <div class="kpi-label">固定支出(含貸款本金)</div>
-          <div class="kpi-value">{{ fmt(fixedExpenseTotal) }}</div>
-          <div class="kpi-sub">規則 {{ fmt(recurringExpenseTotal) }} · 貸款 {{ fmt(loanPaymentTotal) }}</div>
-        </div>
       </div>
 
       <div class="panel-grid">
@@ -452,6 +442,29 @@ const DashboardView = {
         <div class="trend-labels">
           <span v-for="d in netWorthChart.dots" :key="'nwl-' + d.yearMonth">{{ d.month }}月</span>
         </div>
+      </section>
+
+      <section v-if="viewMode === 'month'" class="panel">
+        <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
+        <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
+        <template v-else>
+          <svg viewBox="0 0 100 100" class="donut-chart">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+            <circle
+              v-for="(seg, i) in fixedExpenseDonutSegments" :key="i"
+              cx="50" cy="50" r="40" fill="none"
+              :stroke="seg.color" stroke-width="14"
+              :stroke-dasharray="seg.dash + ' ' + seg.gap"
+              :stroke-dashoffset="seg.dashOffset"
+              transform="rotate(-90 50 50)"
+            />
+          </svg>
+          <div v-for="row in fixedExpenseRows" :key="row.key" class="bar-row">
+            <span class="legend-swatch" :style="{ background: row.color }"></span>
+            <span class="bar-name">{{ row.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
+          </div>
+        </template>
       </section>
 
       <section v-if="viewMode === 'year'" class="panel span-2">

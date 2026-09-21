@@ -307,6 +307,15 @@ const AccountsView = {
       }
     },
     async deleteAccount(account) {
+      if (account.kind === 'loan') {
+        const n = Store.loanRelatedTransactions(account.id).length;
+        const pledges = Store.state.pledges.filter((p) => p.loanAccountId === account.id).length;
+        const detail = [n ? `${n} 筆相關的借款、還款與利息交易` : '', pledges ? `${pledges} 筆質押紀錄` : ''].filter(Boolean).join('和');
+        const msg = `刪除「${account.name}」會連同${detail || '它的相關紀錄'}一起刪除,銀行等帳戶的餘額也會回到沒有這筆借款的樣子,且無法復原。已經還清、想保留歷史的借款,建議改用「封存」。確定要刪除嗎？`;
+        if (!confirm(msg)) return;
+        await Store.deleteAccount(account.id);
+        return;
+      }
       const count = Store.state.transactions.filter(
         (t) => !t.isDeleted && (t.accountId === account.id || t.toAccountId === account.id)
       ).length + Store.state.investments.filter((i) => !i.isDeleted && i.accountId === account.id).length;

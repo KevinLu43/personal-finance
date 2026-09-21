@@ -158,17 +158,33 @@ async function setDefaultAccount(id) {
 // account row itself is gone. Transactions and investments that already
 // referenced it keep their accountId as-is and fall back to "(已刪除帳戶)"
 // wherever that's rendered, rather than being deleted or rewritten.
+//
+// A loan is the exception. Its records are not history of something that
+// still exists: the borrow is a transfer *into* another account, so leaving
+// it behind would keep that account's balance (and net worth) inflated by
+// money owed to nothing, and its installments would go on counting as fixed
+// spending under a nameless "貸款". So deleting a loan also removes everything
+// booked on its behalf — see loanRelatedTransactions.
 async function deleteAccount(id) {
   const doomed = state.accounts.find((a) => a.id === id);
-  // A pledge with no loan behind it locks shares for nothing, so it goes
-  // with the loan (unlike transactions, which keep a dangling accountId).
   if (doomed && doomed.kind === 'loan') {
+    for (const t of loanRelatedTransactions(id)) await deleteTransaction(t.id);
+    // A pledge with no loan behind it locks shares for nothing either.
     for (const p of state.pledges.filter((x) => x.loanAccountId === id)) await Db.remove('pledges', p.id);
     state.pledges = state.pledges.filter((x) => x.loanAccountId !== id);
   }
   await Db.remove('accounts', id);
   const idx = state.accounts.findIndex((a) => a.id === id);
   if (idx !== -1) state.accounts.splice(idx, 1);
+}
+
+// Every live transaction that exists because of one loan: transfers into or
+// out of it (borrowing, repaying principal, installment principal) and the
+// interest booked for it, whether by installments or a pledged stock.
+function loanRelatedTransactions(loanId) {
+  return state.transactions.filter(
+    (t) => !t.isDeleted && (t.accountId === loanId || t.toAccountId === loanId || t.loanId === loanId || t.loanRefId === loanId)
+  );
 }
 
 // --- Loans (質押借款) ---
@@ -186,7 +202,7 @@ async function ensureInterestCategory() {
 // Books one interest payment as an expense on the chosen account. Shared by
 // a whole loan's settlement and by a single pledged stock's, which differ
 // only in how the amount is worked out and how the note names it.
-async function bookInterest(label, interest, fromDate, toDate, payFromAccountId, loanId) {
+async function bookInterest(label, interest, fromDate, toDate, payFromAccountId, { loanId, loanRefId } = {}) {
   if (interest <= 0) return;
   const category = await ensureInterestCategory();
   await addTransaction({
@@ -197,6 +213,7 @@ async function bookInterest(label, interest, fromDate, toDate, payFromAccountId,
     categoryId: category.id,
     note: `${label} 利息 ${fromDate} ~ ${toDate}`,
     loanId,
+    loanRefId,
   });
 }
 
@@ -238,9 +255,10 @@ async function generateLoanInstallments(loanId) {
         toAccountId: loan.id,
         note: `${label} 本金`,
         loanId: loan.id,
+        loanRefId: loan.id,
       });
     }
-    await bookInterest(label, interest, due, due, loan.loanPayFromAccountId, loan.id);
+    await bookInterest(label, interest, due, due, loan.loanPayFromAccountId, { loanId: loan.id, loanRefId: loan.id });
     await updateAccount(loan.id, {
       loanPaidInstallments: loan.loanPaidInstallments + 1,
       loanNextDue: Models.addMonthClamped(due, anchorDay),
@@ -327,7 +345,7 @@ async function extendPledge(id, { date, newMaturity, newRate, payFromAccountId }
   const p = state.pledges.find((x) => x.id === id);
   if (!p || p.isReleased || p.extensions >= p.maxExtensions) return;
   const loan = state.accounts.find((a) => a.id === p.loanAccountId);
-  await bookInterest(`${loan ? loan.name : '質押借款'} ${p.ticker}`, Models.pledgeAccruedInterest(p, date), p.interestFrom, date, payFromAccountId);
+  await bookInterest(`${loan ? loan.name : '質押借款'} ${p.ticker}`, Models.pledgeAccruedInterest(p, date), p.interestFrom, date, payFromAccountId, { loanRefId: p.loanAccountId });
   await updatePledge(id, { rate: newRate, maturity: newMaturity, extensions: p.extensions + 1, interestFrom: date });
 }
 
@@ -339,7 +357,7 @@ async function repayPledge(id, { date, amount, fromAccountId }) {
   if (!p || p.isReleased) return;
   const loan = state.accounts.find((a) => a.id === p.loanAccountId);
   const label = `${loan ? loan.name : '質押借款'} ${p.ticker}`;
-  await bookInterest(label, Models.pledgeAccruedInterest(p, date), p.interestFrom, date, fromAccountId);
+  await bookInterest(label, Models.pledgeAccruedInterest(p, date), p.interestFrom, date, fromAccountId, { loanRefId: p.loanAccountId });
   const pay = Math.min(Number(amount) || 0, p.amount);
   if (pay > 0) {
     await addTransaction({ date, type: 'transfer', amount: pay, accountId: fromAccountId, toAccountId: p.loanAccountId, note: `${label} 還款` });
@@ -683,6 +701,7 @@ window.Store = {
   accountBalance,
   accountHoldingsCost,
   generateLoanInstallments,
+  loanRelatedTransactions,
   bookDueItems,
   renameTicker,
   freeQuantityInAccount,

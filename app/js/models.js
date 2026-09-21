@@ -167,6 +167,10 @@ function newTransaction(fields) {
     // expense carry the loan's id, so a payment can be recognised, grouped
     // and counted as fixed spending.
     loanId: fields.loanId || null,
+    // Broader than loanId: set on *anything* booked on a loan's behalf —
+    // installment payments and also a pledged stock's interest — so deleting
+    // the loan can find every record that only existed because of it.
+    loanRefId: fields.loanRefId || null,
     isDeleted: false,
     updatedAt: nowIso(),
   };
@@ -942,6 +946,48 @@ function monthlyFixedExpense(transactions, year) {
   return months;
 }
 
+// The month view's 固定支出 line items: one row per recurring rule and one per
+// loan, for the transactions whose date starts with `prefix`, biggest first.
+// A rule reads as its own note (or its category) and takes its category's
+// colour; a loan reads as its account name with the principal/interest split
+// as detail, since a loan payment is cash out in both parts. Rows carry a
+// `category` ({ name, color }) so buildDonutSegments can chart them as-is.
+// Everything comes off the ledger's own tags, so a deleted rule or account
+// still shows under the name its transactions recorded.
+function fixedExpenseBreakdown(transactions, prefix, categories, accounts) {
+  const byKey = new Map();
+  for (const t of transactions) {
+    if (t.isDeleted || !t.date.startsWith(prefix)) continue;
+    let key;
+    if (t.loanId) key = 'loan:' + t.loanId;
+    else if (t.type === 'expense' && t.recurringId) key = 'rule:' + t.recurringId;
+    else continue;
+    let row = byKey.get(key);
+    if (!row) {
+      if (t.loanId) {
+        const loan = accounts.find((a) => a.id === t.loanId);
+        row = { key, kind: 'loan', name: loan ? loan.name : '貸款', color: (loan && loan.color) || '#e09f3e', principal: 0, interest: 0, amount: 0 };
+      } else {
+        const category = categories.find((c) => c.id === t.categoryId);
+        row = { key, kind: 'rule', name: t.note || (category ? category.name : '(未分類)'), color: (category && category.color) || '#adb5bd', amount: 0 };
+      }
+      byKey.set(key, row);
+    }
+    row.amount += t.amount;
+    if (row.kind === 'loan') {
+      if (t.type === 'transfer') row.principal += t.amount;
+      else row.interest += t.amount;
+    }
+  }
+  return [...byKey.values()]
+    .map((r) => ({
+      ...r,
+      category: { name: r.name, color: r.color },
+      detail: r.kind === 'loan' ? `本金 ${Math.round(r.principal).toLocaleString('zh-TW')} + 利息 ${Math.round(r.interest).toLocaleString('zh-TW')}` : '',
+    }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
 // Stacked-bar geometry over the same 300x100 viewBox the other dashboard
 // charts use: rule spending at the bottom of each month's bar, loan payments
 // stacked on top. Every value is >= 0, so the baseline is the bottom edge.
@@ -1063,6 +1109,7 @@ window.Models = {
   newRecurring,
   dueOccurrences,
   monthlyFixedExpense,
+  fixedExpenseBreakdown,
   buildFixedExpenseChart,
   splitLoanPayments,
   groupTransactionsByCategory,
