@@ -933,7 +933,12 @@ function buildNetWorthChart(months) {
 // (see addMonthClamped) — the rule stays anchored to "the 31st" rather than
 // sliding to "whatever day the last occurrence landed on".
 function newRecurring(fields) {
-  const today = nowIso().slice(0, 10);
+  // localToday(), not nowIso() — generateDueForOne judges "is this due yet"
+  // against local time, so anchoring the rule's first month against UTC
+  // instead would misfire during Taiwan's UTC-behind hours (00:00–08:00):
+  // a rule created then would anchor to the *previous* month and its
+  // catch-up occurrence would land there instead of this one.
+  const today = localToday();
   const anchorDay = Number(fields.anchorDay);
   const [y, m] = today.slice(0, 7).split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
