@@ -35,8 +35,56 @@ const DashboardDateGroups = {
   `,
 };
 
+// 資產總覽's account rows, one instance per column (資產/負債) so the two
+// sides render from the same markup instead of two hand-copied blocks.
+// percentBase is only passed for the 資產 column — a debt figure showing
+// "X% of assets" wouldn't mean anything, so omitting it (0) just turns the
+// percentage off, the same way the old single-list version skipped it for
+// credit_card/loan rows.
+const DashboardAccountGroups = {
+  props: {
+    groups: { type: Array, required: true },
+    percentBase: { type: Number, default: 0 },
+  },
+  methods: {
+    fmt(n) {
+      return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+    },
+    fmtCur(n, code) {
+      return Models.formatMoney(n, code);
+    },
+    currencySymbol(code) {
+      return Models.currencySymbol(code);
+    },
+    fmtPercent(amount) {
+      return this.percentBase > 0 ? (amount / this.percentBase * 100).toFixed(1) + '%' : '0%';
+    },
+  },
+  template: `
+    <div v-for="g in groups" :key="g.label" class="subsection">
+      <div class="subsection-header">
+        <span>{{ g.label }}</span>
+        <span :class="{ negative: g.subtotal < 0 }">{{ fmt(g.subtotal) }}</span>
+      </div>
+      <div v-for="row in g.rows" :key="row.account.id">
+        <div class="bar-row">
+          <span class="icon-badge-sm" :style="{ background: (row.account.color || '#adb5bd') + '30' }">{{ row.icon }}</span>
+          <span class="bar-name">{{ row.account.name }}</span>
+          <span class="bar-amount" :class="{ negative: row.displayBalance < 0 }">
+            <span v-if="row.foreign" class="muted">{{ currencySymbol(row.account.currency) }}{{ fmtCur(row.nativeBalance, row.account.currency) }} ≈ </span>{{ fmt(row.displayBalance) }}<template v-if="percentBase > 0"> · {{ fmtPercent(row.displayBalance) }}</template>
+          </span>
+        </div>
+        <div v-if="row.account.kind === 'brokerage'" class="account-split">
+          <span>現金 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.cash, row.account.currency) : fmt(row.cash) }}</span>
+          <span>持股成本 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.holdingsCost, row.account.currency) : fmt(row.holdingsCost) }}</span>
+        </div>
+      </div>
+    </div>
+  `,
+};
+
 const DashboardView = {
-  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups },
+  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups, DashboardAccountGroups },
   data() {
     const now = new Date();
     return {
@@ -411,9 +459,18 @@ const DashboardView = {
       return kinds
         .map(({ kind, label }) => {
           const rows = this.accountsWithBalance.filter((r) => r.account.kind === kind);
-          return { label, rows, subtotal: rows.reduce((sum, r) => sum + r.displayBalance, 0) };
+          return { kind, label, rows, subtotal: rows.reduce((sum, r) => sum + r.displayBalance, 0) };
         })
         .filter((g) => g.rows.length > 0);
+    },
+    // 資產總覽's two columns — same groups as accountGroups, just split by
+    // whether the kind is a liability, so 資產 and 負債 read side by side
+    // instead of interleaved in one stacked list.
+    assetAccountGroups() {
+      return this.accountGroups.filter((g) => !Models.isLiabilityKind(g.kind));
+    },
+    liabilityAccountGroups() {
+      return this.accountGroups.filter((g) => Models.isLiabilityKind(g.kind));
     },
     // Share of total card debt each credit card carries, by its own colour —
     // a running snapshot like the rest of 資產總覽, not scoped to the
@@ -502,9 +559,6 @@ const DashboardView = {
     },
     fmtLabelPercent(amount) {
       return this.labelBreakdownTotal > 0 ? (amount / this.labelBreakdownTotal * 100).toFixed(1) + '%' : '0%';
-    },
-    fmtAssetPercent(amount) {
-      return this.assetTotal > 0 ? (amount / this.assetTotal * 100).toFixed(1) + '%' : '0%';
     },
     fmtIncomePercent(amount) {
       return this.incomeBreakdownTotal > 0 ? (amount / this.incomeBreakdownTotal * 100).toFixed(1) + '%' : '0%';
@@ -689,37 +743,32 @@ const DashboardView = {
           <span class="month-table-cell" :class="{ negative: m.net < 0, positive: m.net > 0 }">{{ fmt(m.net) }}</span>
         </div>
       </section>
+      </div>
 
-      <section class="panel">
+      <!-- Full width in both modes — 資產 and 負債 side by side need the room
+           a half-width panel doesn't have, so this isn't paired with anything. -->
+      <section class="panel span-2">
         <h3>資產總覽<span class="muted"> · 淨值 {{ fmt(netWorth) }}</span></h3>
         <div v-if="liabilityTotal !== 0" class="muted asset-formula">資產 {{ fmt(assetTotal) }} − 負債 {{ fmt(liabilityTotal) }} = 淨值 {{ fmt(netWorth) }}</div>
         <div v-if="heldCurrencies.length" class="muted asset-formula">匯率 · {{ rateSummaryText }}(TWD,可在「帳戶」頁調整)</div>
         <div v-if="accountsWithBalance.length === 0" class="empty">還沒有帳戶,先到「帳戶」分頁新增一個</div>
-        <div v-for="g in accountGroups" :key="g.label" class="subsection">
-          <div class="subsection-header">
-            <span>{{ g.label }}</span>
-            <span :class="{ negative: g.subtotal < 0 }">{{ fmt(g.subtotal) }}</span>
+        <div v-else class="asset-liability-split">
+          <div class="asset-liability-col">
+            <div class="asset-liability-col-header"><span>資產</span><span>{{ fmt(assetTotal) }}</span></div>
+            <div v-if="assetAccountGroups.length === 0" class="empty">還沒有資產帳戶</div>
+            <DashboardAccountGroups :groups="assetAccountGroups" :percent-base="assetTotal" />
           </div>
-          <div v-for="row in g.rows" :key="row.account.id">
-            <div class="bar-row">
-              <span class="icon-badge-sm" :style="{ background: (row.account.color || '#adb5bd') + '30' }">{{ row.icon }}</span>
-              <span class="bar-name">{{ row.account.name }}</span>
-              <span class="bar-amount" :class="{ negative: row.displayBalance < 0 }">
-                <span v-if="row.foreign" class="muted">{{ currencySymbol(row.account.currency) }}{{ fmtCur(row.nativeBalance, row.account.currency) }} ≈ </span>{{ fmt(row.displayBalance) }}<template v-if="!['credit_card', 'loan'].includes(row.account.kind)"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
-              </span>
-            </div>
-            <div v-if="row.account.kind === 'brokerage'" class="account-split">
-              <span>現金 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.cash, row.account.currency) : fmt(row.cash) }}</span>
-              <span>持股成本 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.holdingsCost, row.account.currency) : fmt(row.holdingsCost) }}</span>
-            </div>
+          <div class="asset-liability-col">
+            <div class="asset-liability-col-header"><span>負債</span><span :class="{ negative: liabilityTotal > 0 }">{{ fmt(liabilityTotal) }}</span></div>
+            <div v-if="liabilityAccountGroups.length === 0" class="empty">目前沒有負債</div>
+            <DashboardAccountGroups :groups="liabilityAccountGroups" />
           </div>
         </div>
       </section>
-      </div>
 
       <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
       <section class="panel">
-        <h3>{{ viewMode === 'year' ? '全年分類支出' : '分類支出' }}</h3>
+        <h3>{{ viewMode === 'year' ? '全年支出分類' : '支出分類' }}</h3>
         <div v-if="activeSummary.categoryBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有紀錄' : '這個月還沒有紀錄' }}</div>
         <template v-else>
           <svg viewBox="0 0 100 100" class="donut-chart">

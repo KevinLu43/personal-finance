@@ -992,3 +992,23 @@ button.primary {
 .rate-row input { width: 120px; }
 
 .asset-formula { margin: -2px 0 8px; }
+
+/* 資產總覽's two columns — 資產 and 負債 side by side on a wide screen,
+   stacked on a phone where there isn't room for both. */
+.asset-liability-split { display: flex; flex-direction: column; gap: 18px; }
+.asset-liability-col-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.asset-liability-col-header .negative { color: var(--expense); }
+@media (min-width: 480px) {
+  .asset-liability-split { flex-direction: row; }
+  .asset-liability-col { flex: 1; min-width: 0; }
+  .asset-liability-col + .asset-liability-col { padding-left: 18px; border-left: 1px solid var(--line); }
+}
