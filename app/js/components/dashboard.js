@@ -217,7 +217,7 @@ const DashboardView = {
       return Store.monthlyFixedExpense(this.year);
     },
     fixedExpenseChart() {
-      return Models.buildFixedExpenseChart(this.yearlyFixedExpenseMonths);
+      return Models.buildFixedExpenseChart(this.yearlyFixedExpenseMonths, Store.state.categories);
     },
     recurringExpenseYearTotal() {
       return this.yearlyFixedExpenseMonths.reduce((sum, m) => sum + m.amount, 0);
@@ -620,14 +620,14 @@ const DashboardView = {
         <div class="view-header">
           <h3>固定支出<span class="muted"> · {{ year }} 年共 {{ fmt(recurringExpenseYearTotal + loanPaymentYearTotal) }}(貸款含本金)</span></h3>
           <div class="trend-legend">
-            <span class="legend-item"><span class="legend-dot expense"></span>規則 {{ fmt(recurringExpenseYearTotal) }}</span>
-            <span class="legend-item"><span class="legend-dot loan"></span>貸款 {{ fmt(loanPaymentYearTotal) }}</span>
+            <span v-for="s in fixedExpenseChart.series" :key="s.key" class="legend-item">
+              <span class="legend-dot" :style="{ background: s.color }"></span>{{ s.name }} {{ fmt(s.total) }}
+            </span>
           </div>
         </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
           <template v-for="b in fixedExpenseChart.bars" :key="b.month">
-            <rect :x="b.x" :y="b.recurring.y" :width="b.width" :height="b.recurring.height" fill="var(--expense)" />
-            <rect :x="b.x" :y="b.loan.y" :width="b.width" :height="b.loan.height" fill="var(--warning)" />
+            <rect v-for="seg in b.segments" :key="seg.key" :x="b.x" :y="seg.y" :width="b.width" :height="seg.height" :fill="seg.color" />
           </template>
         </svg>
         <div class="trend-labels">

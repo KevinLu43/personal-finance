@@ -1014,15 +1014,23 @@ function dueOccurrences(recurring, todayStr) {
 function monthlyFixedExpense(transactions, year) {
   const months = [];
   for (let m = 1; m <= 12; m++) {
-    months.push({ month: m, yearMonth: `${year}-${String(m).padStart(2, '0')}`, amount: 0, loanAmount: 0 });
+    months.push({ month: m, yearMonth: `${year}-${String(m).padStart(2, '0')}`, amount: 0, loanAmount: 0, byCategory: new Map() });
   }
   const byMonth = new Map(months.map((row) => [row.yearMonth, row]));
   for (const t of transactions) {
     if (t.isDeleted) continue;
     const row = byMonth.get(t.date.slice(0, 7));
     if (!row) continue;
-    if (t.loanId) row.loanAmount += t.amount;
-    else if (t.type === 'expense' && t.recurringId) row.amount += t.amount;
+    if (t.loanId) {
+      row.loanAmount += t.amount;
+    } else if (t.type === 'expense' && t.recurringId) {
+      row.amount += t.amount;
+      // Which category each recurring rule's spending actually belongs to —
+      // buildFixedExpenseChart's year bars stack by this instead of one flat
+      // "規則" bucket, same as an uncategorised expense reads "(未分類)" elsewhere.
+      const key = t.categoryId || '__none__';
+      row.byCategory.set(key, (row.byCategory.get(key) || 0) + t.amount);
+    }
   }
   return months;
 }
@@ -1072,22 +1080,49 @@ function fixedExpenseBreakdown(transactions, prefix, categories, accounts) {
 // Stacked-bar geometry over the same 300x100 viewBox the other dashboard
 // charts use: rule spending at the bottom of each month's bar, loan payments
 // stacked on top. Every value is >= 0, so the baseline is the bottom edge.
-function buildFixedExpenseChart(months) {
+// Stacks each month's 固定支出 by the category its recurring rule was
+// recorded under, loan payments kept as their own "貸款" segment on top
+// (repaying debt isn't itself a spending category). Ranked by the year's
+// total so the biggest categories keep a stable color across every month's
+// bar; anything past the top 5 folds into "其他" so the legend can't grow
+// past a handful of entries no matter how many different rules exist.
+const FIXED_EXPENSE_MAX_CATEGORY_SERIES = 5;
+function buildFixedExpenseChart(months, categories = []) {
+  const yearTotals = new Map();
+  for (const m of months) {
+    for (const [key, amount] of m.byCategory) yearTotals.set(key, (yearTotals.get(key) || 0) + amount);
+  }
+  const ranked = [...yearTotals.entries()].sort((a, b) => b[1] - a[1]);
+  const topKeys = ranked.slice(0, FIXED_EXPENSE_MAX_CATEGORY_SERIES).map(([key]) => key);
+  const topKeySet = new Set(topKeys);
+  const hasOther = ranked.length > FIXED_EXPENSE_MAX_CATEGORY_SERIES;
+
+  const nameOf = (key) => (key === '__none__' ? '(未分類)' : (categories.find((c) => c.id === key)?.name || '(已刪除分類)'));
+  const colorOf = (key) => (key === '__none__' ? '#adb5bd' : (categories.find((c) => c.id === key)?.color || '#adb5bd'));
+  const series = topKeys.map((key) => ({ key, name: nameOf(key), color: colorOf(key), total: yearTotals.get(key) }));
+  if (hasOther) {
+    series.push({ key: '__other__', name: '其他', color: '#8a8a8a', total: ranked.slice(FIXED_EXPENSE_MAX_CATEGORY_SERIES).reduce((s, [, v]) => s + v, 0) });
+  }
+  const loanTotal = months.reduce((s, m) => s + m.loanAmount, 0);
+  series.push({ key: '__loan__', name: '貸款', color: '#e09f3e', total: loanTotal });
+
   const maxValue = Math.max(1, ...months.map((m) => m.amount + m.loanAmount));
   const colWidth = 300 / months.length;
   const barWidth = colWidth * 0.5;
   const bars = months.map((m, i) => {
-    const recurringH = (m.amount / maxValue) * 100;
-    const loanH = (m.loanAmount / maxValue) * 100;
-    return {
-      month: m.month,
-      x: colWidth * i + (colWidth - barWidth) / 2,
-      width: barWidth,
-      recurring: { y: 100 - recurringH, height: recurringH },
-      loan: { y: 100 - recurringH - loanH, height: loanH },
-    };
+    let cursorY = 100;
+    const segments = series.map((s) => {
+      let amount;
+      if (s.key === '__loan__') amount = m.loanAmount;
+      else if (s.key === '__other__') amount = [...m.byCategory.entries()].filter(([key]) => !topKeySet.has(key)).reduce((sum, [, v]) => sum + v, 0);
+      else amount = m.byCategory.get(s.key) || 0;
+      const height = (amount / maxValue) * 100;
+      cursorY -= height;
+      return { key: s.key, y: cursorY, height, color: s.color };
+    });
+    return { month: m.month, x: colWidth * i + (colWidth - barWidth) / 2, width: barWidth, segments };
   });
-  return { bars };
+  return { bars, series };
 }
 
 // Splits a day's (or any) transaction list into loan installment payments
