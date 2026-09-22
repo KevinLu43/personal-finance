@@ -1,3 +1,6 @@
+// Past this many categories, 分類支出's donut and legend fold the rest into one "其他" row (dashboard.js's categoryBreakdownRows).
+const DASHBOARD_CATEGORY_MAX_SERIES = 6;
+
 const DASHBOARD_TYPE_LABELS = { expense: '支出', income: '收入', transfer: '轉帳' };
 
 // The 記帳明細 date groups (one folded header per day, its transactions
@@ -173,8 +176,25 @@ const DashboardView = {
       const w = this.netWorthTrendMonths[i];
       return { label: m.yearMonth.slice(0, 4) + ' 年 ' + m.month + ' 月', income: m.income, expense: m.expense, net: m.net, worth: w ? w.netWorth : null };
     },
+    // 分類支出's rows, capped at the biggest DASHBOARD_CATEGORY_MAX_SERIES —
+    // past that, a household with many small categories turns the donut
+    // into unreadable slivers and the legend into a wall of text. The rest
+    // fold into one "其他" row that still expands (see the template) onto
+    // the categories inside it, so nothing is actually hidden, just collapsed.
+    categoryBreakdownRows() {
+      const rows = this.activeSummary.categoryBreakdown; // already sorted by amount desc
+      if (rows.length <= DASHBOARD_CATEGORY_MAX_SERIES) return rows;
+      const top = rows.slice(0, DASHBOARD_CATEGORY_MAX_SERIES);
+      const rest = rows.slice(DASHBOARD_CATEGORY_MAX_SERIES);
+      const otherAmount = rest.reduce((s, row) => s + row.amount, 0);
+      return [...top, {
+        category: { id: '__other__', name: '其他', icon: '➕', color: '#8a8a8a' },
+        amount: otherAmount,
+        otherRows: rest,
+      }];
+    },
     donutSegments() {
-      return Models.buildDonutSegments(this.activeSummary.categoryBreakdown);
+      return Models.buildDonutSegments(this.categoryBreakdownRows);
     },
     // The percentage base for 分類支出's rows — the breakdown's own total
     // rather than activeSummary.expense, since an uncategorized expense has
@@ -189,12 +209,13 @@ const DashboardView = {
     incomeBreakdownTotal() {
       return this.activeSummary.incomeCategoryBreakdown.reduce((s, row) => s + row.amount, 0);
     },
-    // Budgets are a standing monthly cap, so this only means something in
-    // month mode — the year view has no single number to compare a whole
-    // year's spend against.
+    // Budgets are a standing monthly cap; the year view compares a whole
+    // year's spend against 12 months of it instead of leaving budgets out
+    // of year mode entirely.
     budgetProgress() {
-      if (this.viewMode !== 'month') return [];
-      return Models.budgetProgress(Store.state.categories, this.monthSummary.categoryBreakdown);
+      const breakdown = this.viewMode === 'year' ? this.yearSummary.categoryBreakdown : this.monthSummary.categoryBreakdown;
+      const periods = this.viewMode === 'year' ? 12 : 1;
+      return Models.budgetProgress(Store.state.categories, breakdown, periods);
     },
     // Month mode's 固定支出: every recurring rule and every loan that was paid
     // this month as its own line, charted as a donut. Loan payments count in
@@ -635,8 +656,8 @@ const DashboardView = {
         </div>
       </section>
 
-      <section v-if="viewMode === 'month' && budgetProgress.length" class="panel">
-        <h3>預算</h3>
+      <section v-if="budgetProgress.length" class="panel" :class="{ 'span-2': viewMode === 'year' }">
+        <h3>預算<span v-if="viewMode === 'year'" class="muted"> · 全年(每月上限 × 12)</span></h3>
         <div v-for="row in budgetProgress" :key="row.category.id" class="budget-row">
           <div class="budget-row-top">
             <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
@@ -712,7 +733,7 @@ const DashboardView = {
               transform="rotate(-90 50 50)"
             />
           </svg>
-          <div v-for="row in activeSummary.categoryBreakdown" :key="row.category.id">
+          <div v-for="row in categoryBreakdownRows" :key="row.category.id">
             <div class="bar-row clickable" @click="toggleCategoryExpand(row.category.id)">
               <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
               <span class="bar-name">{{ row.category.name }}</span>
@@ -720,14 +741,25 @@ const DashboardView = {
               <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCategoryPercent(row.amount) }}</span>
             </div>
             <div v-if="expandedCategoryId === row.category.id" class="category-detail">
-              <div v-if="categoryLabelBreakdown(row.category.id).length === 0" class="empty">這個分類底下的交易都還沒有標籤</div>
-              <div v-for="d in categoryLabelBreakdown(row.category.id)" :key="d.label.id" class="category-detail-row">
-                <span class="category-detail-note">{{ d.label.name }}</span>
-                <span class="category-detail-bar-track">
-                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%' }"></span>
-                </span>
-                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-              </div>
+              <template v-if="row.otherRows">
+                <div v-for="d in row.otherRows" :key="d.category.id" class="category-detail-row">
+                  <span class="category-detail-note">{{ d.category.icon }} {{ d.category.name }}</span>
+                  <span class="category-detail-bar-track">
+                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color || '#adb5bd' }"></span>
+                  </span>
+                  <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <div v-if="categoryLabelBreakdown(row.category.id).length === 0" class="empty">這個分類底下的交易都還沒有標籤</div>
+                <div v-for="d in categoryLabelBreakdown(row.category.id)" :key="d.label.id" class="category-detail-row">
+                  <span class="category-detail-note">{{ d.label.name }}</span>
+                  <span class="category-detail-bar-track">
+                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%' }"></span>
+                  </span>
+                  <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+                </div>
+              </template>
             </div>
           </div>
         </template>

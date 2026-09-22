@@ -650,16 +650,21 @@ function buildDonutSegments(categoryBreakdown) {
 // if the category had no transactions this period at all, since it should
 // still show up empty rather than disappear). Sorted worst-first so the
 // category closest to (or over) its cap is what the reader sees first.
-function budgetProgress(categories, categoryBreakdown) {
+// `periods` scales the category's standing monthly cap up to whatever
+// window categoryBreakdown was actually summed over — 1 for a single
+// month, 12 for a full year — since a budget is only ever set as one
+// monthly figure and has no separate yearly figure of its own.
+function budgetProgress(categories, categoryBreakdown, periods = 1) {
   const spentByCategory = new Map(categoryBreakdown.map((row) => [row.category.id, row.amount]));
   return categories
     .filter((c) => c.kind === 'expense' && !c.isArchived && c.budgetLimit > 0)
     .map((c) => {
       const spent = spentByCategory.get(c.id) || 0;
-      const ratio = spent / c.budgetLimit;
+      const limit = c.budgetLimit * periods;
+      const ratio = spent / limit;
       const warningThreshold = c.budgetWarningThreshold ?? 0.8;
       const status = ratio >= 1 ? 'over' : ratio >= warningThreshold ? 'warning' : 'ok';
-      return { category: c, spent, limit: c.budgetLimit, ratio, status };
+      return { category: c, spent, limit, ratio, status };
     })
     .sort((a, b) => b.ratio - a.ratio);
 }
