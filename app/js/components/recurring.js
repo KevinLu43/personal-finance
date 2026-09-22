@@ -228,7 +228,7 @@ const RecurringTransactionsPanel = {
     // every standing monthly payment is in one place. Read-only here — the
     // terms live on the account (帳戶 tab), which is where they are edited.
     loanInstallments() {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = Models.localToday();
       return Store.state.accounts
         .filter((a) => a.kind === 'loan' && a.loanType !== 'pledge' && !a.isArchived && a.loanInstallments && a.loanNextDue)
         .map((a) => {

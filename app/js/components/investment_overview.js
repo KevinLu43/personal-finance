@@ -255,7 +255,7 @@ const InvestmentOverviewView = {
       this.expandedDate = this.expandedDate === date ? null : date;
     },
     openNew() {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = Models.localToday();
       this.formDefaultDate = today.startsWith(this.yearMonth) ? today : `${this.yearMonth}-01`;
       this.editingId = 'new';
     },

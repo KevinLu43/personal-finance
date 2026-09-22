@@ -257,7 +257,7 @@ const TransactionFormModal = {
           };
         }
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = Models.localToday();
       // 記帳's own default, independent of a brokerage/loan account's — this
       // form never lists brokerage or loan accounts (accountGroups below), so
       // picking one here would leave accountId pointing at nothing selectable.

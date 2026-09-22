@@ -231,7 +231,7 @@ const InvestmentFormModal = {
           };
         }
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = Models.localToday();
       const candidates = Store.state.accounts.filter((a) => a.kind === 'brokerage' && !a.isArchived);
       const marketPreferred = this.defaultMarket ? candidates.find((a) => a.market === this.defaultMarket) : null;
       const firstAccount = candidates.find((a) => a.isDefault) || marketPreferred || candidates[0];
@@ -370,7 +370,7 @@ const InvestmentsView = {
     return {
       year: now.getFullYear(),
       month: now.getMonth() + 1,
-      selectedDay: now.toISOString().slice(0, 10),
+      selectedDay: Models.localToday(),
       editingId: null,
       formDefaultDate: null,
     };
@@ -380,7 +380,7 @@ const InvestmentsView = {
       return `${this.year}-${String(this.month).padStart(2, '0')}`;
     },
     todayStr() {
-      return new Date().toISOString().slice(0, 10);
+      return Models.localToday();
     },
     weekdayLabels() {
       return INVESTMENT_WEEKDAY_LABELS;

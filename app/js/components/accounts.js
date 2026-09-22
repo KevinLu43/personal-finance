@@ -75,7 +75,7 @@ const AccountRowItem = {
       return Store.state.pledges.filter((p) => p.loanAccountId === this.account.id && !p.isReleased);
     },
     pledgeAccruedTotal() {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = Models.localToday();
       return this.activePledges.reduce((sum, p) => sum + Store.pledgeAccruedInterest(p, today), 0).toLocaleString('zh-TW');
     },
   },
@@ -391,7 +391,7 @@ const AccountsView = {
     },
     async exportBackup() {
       const backup = Store.exportBackupData();
-      const filename = `backup-${new Date().toISOString().slice(0, 10)}.json`;
+      const filename = `backup-${Models.localToday()}.json`;
       this.backupMessage = '';
       try {
         const result = await Backup.saveBackupFile(backup, filename);

@@ -9,7 +9,7 @@ const TransactionsView = {
       month: now.getMonth() + 1, // 1-12
       // Always a real date, not a popup toggle: the bottom half always
       // shows *some* day's records, defaulting to today.
-      selectedDay: now.toISOString().slice(0, 10),
+      selectedDay: Models.localToday(),
       editingId: null, // null closed, 'new' or a transaction id, drives the form modal
       formDefaultDate: null,
     };
@@ -19,7 +19,7 @@ const TransactionsView = {
       return `${this.year}-${String(this.month).padStart(2, '0')}`;
     },
     todayStr() {
-      return new Date().toISOString().slice(0, 10);
+      return Models.localToday();
     },
     weekdayLabels() {
       return WEEKDAY_LABELS;

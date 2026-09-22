@@ -10,5 +10,5 @@ function loanPayableAccounts() {
 }
 
 function loanToday() {
-  return new Date().toISOString().slice(0, 10);
+  return Models.localToday();
 }
