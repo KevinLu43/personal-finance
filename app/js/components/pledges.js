@@ -315,6 +315,22 @@ const LoanPledgeModal = {
     receiveAccounts() {
       return Store.activeAccounts().filter((a) => a.kind !== 'loan');
     },
+    // Grouped by kind, same convention TransactionFormModal's accountGroups
+    // uses — receiveAccounts alone sorts by each account's raw creation-order
+    // sortOrder, which interleaves cash/bank/credit_card/brokerage accounts
+    // in whatever order they happened to be created rather than keeping each
+    // kind together.
+    receiveAccountGroups() {
+      const kinds = [
+        { kind: 'cash', label: '現金' },
+        { kind: 'bank', label: '銀行' },
+        { kind: 'credit_card', label: '信用卡' },
+        { kind: 'brokerage', label: '證券交割' },
+      ];
+      return kinds
+        .map(({ kind, label }) => ({ label, accounts: this.receiveAccounts.filter((a) => a.kind === kind) }))
+        .filter((g) => g.accounts.length > 0);
+    },
     account() {
       return Store.state.accounts.find((a) => a.id === this.form.accountId) || null;
     },
@@ -407,7 +423,9 @@ const LoanPledgeModal = {
             <label>最多可展延次數 <input type="number" min="0" step="1" v-model="form.maxExtensions" /></label>
             <label>借到的錢轉入
               <select v-model="form.receiveAccountId">
-                <option v-for="a in receiveAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+                <optgroup v-for="g in receiveAccountGroups" :key="g.label" :label="g.label">
+                  <option v-for="a in g.accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+                </optgroup>
               </select>
               <span class="field-hint">會自動記一筆「借款 → 這個帳戶」的轉帳</span>
             </label>
