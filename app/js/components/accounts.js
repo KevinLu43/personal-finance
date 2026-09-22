@@ -18,10 +18,23 @@ const AccountRowItem = {
     isDebt() {
       return Models.isLiabilityKind(this.account.kind);
     },
-    displayAmount() {
+    isForeign() {
+      return !!this.account.currency && this.account.currency !== 'TWD' && !!Models.CURRENCIES[this.account.currency];
+    },
+    // The balance in the account's own currency; a foreign one also shows its
+    // TWD equivalent underneath (foreignBase), since totals are in TWD.
+    nativeAmount() {
       const owed = Store.accountBalance(this.account);
-      const n = this.isDebt ? -owed : owed;
-      return (n === 0 ? 0 : n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+      return this.isDebt ? -owed : owed;
+    },
+    displayAmount() {
+      const n = this.nativeAmount;
+      const text = Models.formatMoney(n === 0 ? 0 : n, this.account.currency);
+      return this.isForeign ? Models.currencySymbol(this.account.currency) + text : text;
+    },
+    foreignBase() {
+      const twd = this.nativeAmount * Models.rateOf(this.account.currency, Store.state.rates);
+      return '≈ NT$ ' + Math.round(twd).toLocaleString('zh-TW');
     },
     isNegative() {
       return this.isDebt ? Store.accountBalance(this.account) > 0 : Store.accountBalance(this.account) < 0;
@@ -100,7 +113,10 @@ const AccountRowItem = {
         <div v-if="installmentIssue" class="list-row-sub negative">⚠ {{ installmentIssue }}</div>
         <div v-if="isLoan && !isPledge && !account.loanInstallments" class="list-row-sub">{{ loanTypeLabel }} · 尚未設定分期(按「編輯」設定分期數與扣款帳戶)</div>
       </div>
-      <div class="list-row-amount" :class="{ negative: isNegative }">{{ displayAmount }}</div>
+      <div class="list-row-amount" :class="{ negative: isNegative }">
+        {{ displayAmount }}
+        <div v-if="isForeign" class="list-row-sub">{{ foreignBase }}</div>
+      </div>
       <div class="list-row-actions">
         <button v-if="isPledge" @click="$emit('pledge', account)">新增質押</button>
         <button @click="$emit('edit', account)">編輯</button>
@@ -184,6 +200,12 @@ const AccountsView = {
       return paid > 0
         ? `會補記前 ${paid} 期的還款紀錄(本金轉帳＋利息支出);補記後剩餘本金約 ${fmt(start)},之後每期約 ${fmt(pay)}`
         : `每期約 ${fmt(pay)}`;
+    },
+    currencies() {
+      return Models.CURRENCIES;
+    },
+    rates() {
+      return Store.state.rates;
     },
     payableAccounts() {
       return Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
@@ -286,7 +308,7 @@ const AccountsView = {
         kind: this.form.kind,
         icon: this.form.icon,
         color: this.form.color || '#adb5bd',
-        currency: this.form.currency || 'TWD',
+        currency: this.form.kind === 'brokerage' ? Models.marketCurrency(this.form.market) : this.form.currency || 'TWD',
         initialBalance: Number(this.form.initialBalance) || 0,
         creditLimit: this.form.kind === 'credit_card' ? Number(this.form.creditLimit) || 0 : null,
         market: this.form.kind === 'brokerage' ? this.form.market : null,
@@ -322,6 +344,9 @@ const AccountsView = {
       // date), so book them right away instead of waiting for the next launch.
       if (fields.kind === 'loan') await Store.generateLoanInstallments(savedId);
       this.editingId = null;
+    },
+    async setRate(code, value) {
+      await Store.setExchangeRate(code, value);
     },
     async toggleArchive(account) {
       await Store.setAccountArchived(account.id, !account.isArchived);
@@ -385,6 +410,16 @@ const AccountsView = {
   template: `
     <div class="view">
       <div class="view-header"><h2>帳戶</h2></div>
+
+      <section class="panel">
+        <h3>匯率設定<span class="muted"> · 1 單位外幣 = 多少台幣</span></h3>
+        <div class="rate-row" v-for="code in ['USD', 'JPY']" :key="code">
+          <span class="rate-label">1 {{ code }} {{ currencies[code].label }} =</span>
+          <input type="number" step="any" min="0" :value="rates[code]" @change="setRate(code, $event.target.value)" />
+          <span>TWD</span>
+        </div>
+        <p class="muted" style="margin: 8px 0 0;">總覽、淨值、統計都用這個匯率把外幣帳戶換成台幣;改匯率會連同過去的紀錄一起重算(不記歷史匯率)</p>
+      </section>
 
       <div class="panel-grid">
       <section class="panel">
@@ -484,8 +519,14 @@ const AccountsView = {
                 <option value="TW">台股</option>
                 <option value="US">美股</option>
               </select>
+              <span class="field-hint">{{ form.market === 'US' ? '美股帳戶以美金(USD)記帳,總覽用「匯率設定」換算成台幣' : '台股帳戶以台幣記帳' }}</span>
             </label>
-            <label v-else>幣別 <input v-model="form.currency" /></label>
+            <label v-else>幣別
+              <select v-model="form.currency">
+                <option v-for="(c, code) in currencies" :key="code" :value="code">{{ code }} {{ c.label }}</option>
+              </select>
+              <span v-if="form.currency !== 'TWD'" class="field-hint">金額以 {{ form.currency }} 記,總覽和淨值用「匯率設定」換算成台幣</span>
+            </label>
             <label>{{ form.kind === 'credit_card' ? '目前欠款(起始)' : form.kind === 'loan' && form.loanType === 'pledge' ? '目前借款餘額(起始)' : form.kind === 'loan' ? (editingId === 'new' ? '貸款金額(原始借款金額)' : '貸款金額(目前還欠的本金)') : '起始餘額' }}
               <input type="number" v-model="form.initialBalance" />
             </label>

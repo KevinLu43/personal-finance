@@ -128,7 +128,8 @@ const InvestmentOverviewView = {
       return Models.holdingsSummary(Store.state.investments);
     },
     totalRealizedPL() {
-      return this.allHoldings.reduce((s, h) => s + h.realizedPL, 0);
+      // In TWD, since it spans both markets (US holdings are in USD).
+      return this.allHoldings.reduce((s, h) => s + h.realizedPL * Models.rateOf(Models.marketCurrency(h.market), Store.state.rates), 0);
     },
     // Everything below this point is scoped to whichever market tab is
     // active — one owner for "which market am I looking at" instead of each
@@ -255,7 +256,7 @@ const InvestmentOverviewView = {
   template: `
     <div class="view">
       <div class="view-header">
-        <h2>投資總覽<span class="muted"> · 已實現 {{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}</span></h2>
+        <h2>投資總覽<span class="muted"> · 已實現(台幣){{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}</span></h2>
       </div>
 
       <div v-if="needsTickerFix" class="notice-bar">

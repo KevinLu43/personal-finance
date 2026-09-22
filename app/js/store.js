@@ -16,6 +16,8 @@ const state = reactive({
   investments: [],
   recurringTransactions: [],
   pledges: [],
+  // TWD per 1 unit of each foreign currency, set by the operator.
+  rates: { USD: 32, JPY: 0.21 },
 });
 
 async function loadAll() {
@@ -37,7 +39,10 @@ async function loadAll() {
   state.investments = investments;
   state.recurringTransactions = recurringTransactions;
   state.pledges = pledges;
+  const savedRates = (await Db.getAll('settings')).find((r) => r.id === 'rates');
+  if (savedRates) state.rates = { ...state.rates, ...savedRates.values };
   await migrateLabelSortOrder();
+  await migrateBrokerageCurrency();
   await migrateLoanTypes();
   await purgeOrphanLoanRecords();
 }
@@ -61,6 +66,21 @@ async function purgeOrphanLoanRecords() {
     (t) => !t.isDeleted && [t.loanId, t.loanRefId, t.accountId, t.toAccountId].some((id) => id && orphanIds.has(id))
   );
   for (const t of doomed) await deleteTransaction(t.id);
+}
+
+// A brokerage account's currency follows its market (US = USD). Accounts
+// created before currencies existed are all marked TWD, so a US one is
+// corrected here; safe to run again since it only touches mismatches.
+async function migrateBrokerageCurrency() {
+  for (let i = 0; i < state.accounts.length; i++) {
+    const a = state.accounts[i];
+    if (a.kind !== 'brokerage') continue;
+    const currency = Models.marketCurrency(a.market);
+    if (a.currency === currency) continue;
+    const updated = { ...a, currency };
+    await Db.put('accounts', updated);
+    state.accounts[i] = updated;
+  }
 }
 
 // One-time upgrade for loans and pledges written before loan types and
@@ -560,7 +580,7 @@ async function deleteInvestment(id) {
 }
 
 function dailyInvestmentTotals(yearMonth) {
-  return Models.dailyInvestmentTotals(state.investments, yearMonth);
+  return Models.dailyInvestmentTotals(state.investments, yearMonth, state.rates);
 }
 
 // --- Recurring transactions (monthly rent/subscriptions/salary/...) ---
@@ -656,6 +676,33 @@ function activeCategories(kind) {
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
+// --- Currencies ---
+
+async function setExchangeRate(code, rate) {
+  const value = Number(rate);
+  if (!(value > 0) || !Models.CURRENCIES[code] || code === 'TWD') return;
+  state.rates = { ...state.rates, [code]: value };
+  await Db.put('settings', { id: 'rates', values: { ...state.rates } });
+}
+
+// The state's transactions with every amount in TWD (see
+// Models.toBaseTransactions) — what any total spanning accounts must read.
+function baseTransactionList() {
+  return Models.toBaseTransactions(state.transactions, state.accounts, state.rates);
+}
+
+// One transaction's amount in TWD, for summing rows that stay in their own
+// currency for display.
+function baseAmountOf(t) {
+  const account = state.accounts.find((a) => a.id === t.accountId);
+  return t.amount * Models.rateOf(account && account.currency, state.rates);
+}
+
+function currencyOfAccount(accountId) {
+  const account = state.accounts.find((a) => a.id === accountId);
+  return (account && account.currency) || 'TWD';
+}
+
 function accountBalance(account) {
   return Models.accountBalance(account, state.transactions, state.investments);
 }
@@ -669,31 +716,31 @@ function accountHoldingsCost(account) {
 }
 
 function monthlySummary(yearMonth) {
-  return Models.monthlySummary(state.transactions, state.categories, yearMonth);
+  return Models.monthlySummary(baseTransactionList(), state.categories, yearMonth);
 }
 
 function yearlySummary(year) {
-  return Models.yearlySummary(state.transactions, state.categories, year);
+  return Models.yearlySummary(baseTransactionList(), state.categories, year);
 }
 
 function monthlyTrend(endYearMonth, monthCount) {
-  return Models.monthlyTrend(state.transactions, endYearMonth, monthCount);
+  return Models.monthlyTrend(baseTransactionList(), endYearMonth, monthCount);
 }
 
 function netWorthTrend(endYearMonth, monthCount) {
-  return Models.netWorthTrend(state.accounts, state.transactions, state.investments, endYearMonth, monthCount);
+  return Models.netWorthTrend(state.accounts, state.transactions, state.investments, endYearMonth, monthCount, state.rates);
 }
 
 function monthlyFixedExpense(year) {
-  return Models.monthlyFixedExpense(state.transactions, year);
+  return Models.monthlyFixedExpense(baseTransactionList(), year);
 }
 
 function dailyTotals(yearMonth) {
-  return Models.dailyTotals(state.transactions, yearMonth);
+  return Models.dailyTotals(baseTransactionList(), yearMonth);
 }
 
 function exportBackupData() {
-  return Models.buildBackup(state);
+  return Models.buildBackup({ ...state, rates: { ...state.rates } });
 }
 
 window.Store = {
@@ -721,6 +768,10 @@ window.Store = {
   activeAccounts,
   activeCategories,
   accountBalance,
+  setExchangeRate,
+  baseTransactionList,
+  baseAmountOf,
+  currencyOfAccount,
   accountHoldingsCost,
   generateLoanInstallments,
   loanRelatedTransactions,

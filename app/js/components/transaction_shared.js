@@ -21,6 +21,20 @@ const TransactionRowItem = {
     labelNames() {
       return Store.labelsForTransaction(this.transaction.id).map((l) => l.name);
     },
+    // A row shows its amount in the currency of the account it is booked on —
+    // only a foreign one gets a symbol, so plain TWD rows read as before.
+    currency() {
+      return Store.currencyOfAccount(this.transaction.accountId);
+    },
+    amountText() {
+      const t = this.transaction;
+      const symbol = this.currency === 'TWD' ? '' : Models.currencySymbol(this.currency);
+      let text = symbol + Models.formatMoney(t.amount, this.currency);
+      if (t.type === 'transfer' && t.toAmount) {
+        text += ' → ' + Models.currencySymbol(Store.currencyOfAccount(t.toAccountId)) + Models.formatMoney(t.toAmount, Store.currencyOfAccount(t.toAccountId));
+      }
+      return text;
+    },
   },
   methods: {
     fmt(n) {
@@ -44,7 +58,7 @@ const TransactionRowItem = {
         </div>
       </div>
       <div class="list-row-amount" :class="{ negative: transaction.type === 'expense', positive: transaction.type === 'income' }">
-        {{ transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : '' }}{{ fmt(transaction.amount) }}
+        {{ transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : '' }}{{ amountText }}
       </div>
       <button class="row-delete" @click.stop="$emit('remove', transaction)" aria-label="刪除">✕</button>
     </div>
@@ -178,6 +192,29 @@ const TransactionFormModal = {
     // 證券交割 accounts are only offered for a transfer (funding one from a
     // bank, or moving proceeds back out) — an expense or income never
     // touches one directly, trades settle through the 投資 form instead.
+    fromCurrency() {
+      return Store.currencyOfAccount(this.form.accountId);
+    },
+    toCurrency() {
+      return Store.currencyOfAccount(this.form.toAccountId);
+    },
+    crossCurrency() {
+      return this.form.type === 'transfer' && !!this.form.toAccountId && this.fromCurrency !== this.toCurrency;
+    },
+    // What the receiving side would get at the current rates.
+    suggestedToAmount() {
+      const amount = Number(this.form.amount);
+      if (!amount) return 0;
+      const rates = Store.state.rates;
+      const value = (amount * Models.rateOf(this.fromCurrency, rates)) / Models.rateOf(this.toCurrency, rates);
+      return this.toCurrency === 'USD' ? Math.round(value * 100) / 100 : Math.round(value);
+    },
+    suggestedText() {
+      return this.suggestedToAmount ? Models.currencySymbol(this.toCurrency) + Models.formatMoney(this.suggestedToAmount, this.toCurrency) : '請先填金額';
+    },
+    amountSymbol() {
+      return this.fromCurrency === 'TWD' ? '' : `(${this.fromCurrency})`;
+    },
     accountGroups() {
       const kinds = [
         { kind: 'cash', label: '現金' },
@@ -213,6 +250,7 @@ const TransactionFormModal = {
             amount: t.amount,
             accountId: t.accountId,
             toAccountId: t.toAccountId || '',
+            toAmount: t.toAmount || '',
             categoryId: t.categoryId || '',
             note: t.note || '',
             labelNames: Store.labelsForTransaction(t.id).map((l) => l.name),
@@ -231,6 +269,7 @@ const TransactionFormModal = {
         amount: '',
         accountId: firstAccount ? firstAccount.id : '',
         toAccountId: '',
+        toAmount: '',
         categoryId: '',
         note: '',
         labelNames: [],
@@ -264,6 +303,9 @@ const TransactionFormModal = {
         amount,
         accountId: this.form.accountId,
         toAccountId: this.form.type === 'transfer' ? this.form.toAccountId : null,
+        // Only a transfer between two currencies carries a received amount;
+        // left blank it is worked out from the rates.
+        toAmount: this.crossCurrency ? Number(this.form.toAmount) || this.suggestedToAmount : null,
         categoryId: this.form.type === 'transfer' ? null : this.form.categoryId,
         note: this.form.note.trim(),
       };
@@ -314,7 +356,7 @@ const TransactionFormModal = {
             </select>
           </label>
           <label>日期 <input type="date" v-model="form.date" /></label>
-          <label>金額 <CalculatorField v-model="form.amount" /></label>
+          <label>金額{{ amountSymbol }} <CalculatorField v-model="form.amount" /></label>
           <label>{{ form.type === 'transfer' ? '轉出帳戶' : '帳戶' }}
             <select v-model="form.accountId">
               <optgroup v-for="g in accountGroups" :key="g.label" :label="g.label">
@@ -328,6 +370,10 @@ const TransactionFormModal = {
                 <option v-for="a in g.accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
               </optgroup>
             </select>
+          </label>
+          <label v-if="crossCurrency">轉入金額({{ toCurrency }})
+            <input type="number" step="any" min="0" v-model="form.toAmount" :placeholder="String(suggestedToAmount || '')" />
+            <span class="field-hint">跨幣別轉帳:留空會依目前匯率換算({{ suggestedText }}),實際入帳金額不同時請手動填</span>
           </label>
           <label v-if="form.type !== 'transfer'">分類
             <select v-model="form.categoryId">

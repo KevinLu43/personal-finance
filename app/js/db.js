@@ -3,9 +3,9 @@
 // so the storage engine can be swapped later without touching call sites.
 
 const DB_NAME = 'personal_finance';
-const DB_VERSION = 4; // bumped for the 'pledges' store
+const DB_VERSION = 5; // bumped for the 'settings' store
 
-const STORES = ['accounts', 'categories', 'labels', 'transactions', 'transactionLabels', 'investments', 'recurringTransactions', 'pledges'];
+const STORES = ['accounts', 'categories', 'labels', 'transactions', 'transactionLabels', 'investments', 'recurringTransactions', 'pledges', 'settings'];
 
 let dbPromise = null;
 
@@ -41,6 +41,9 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains('pledges')) {
         db.createObjectStore('pledges', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('settings')) {
+        db.createObjectStore('settings', { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);

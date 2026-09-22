@@ -203,7 +203,7 @@ const DashboardView = {
     // repaying principal isn't spending).
     fixedExpenseRows() {
       if (this.viewMode !== 'month') return [];
-      return Models.fixedExpenseBreakdown(Store.state.transactions, this.periodPrefix, Store.state.categories, Store.state.accounts);
+      return Models.fixedExpenseBreakdown(Store.baseTransactionList(), this.periodPrefix, Store.state.categories, Store.state.accounts);
     },
     fixedExpenseTotal() {
       return this.fixedExpenseRows.reduce((sum, row) => sum + row.amount, 0);
@@ -229,7 +229,7 @@ const DashboardView = {
     // needs and the same set categoryLabelBreakdown/labelNoteBreakdown pick
     // through by category or by label.
     periodExpenseTransactions() {
-      return Store.state.transactions.filter(
+      return Store.baseTransactionList().filter(
         (t) => !t.isDeleted && t.type === 'expense' && t.date.startsWith(this.periodPrefix)
       );
     },
@@ -287,8 +287,8 @@ const DashboardView = {
           groups.push(group);
         }
         group.items.push(t);
-        if (t.type === 'expense') group.expenseTotal += t.amount;
-        else if (t.type === 'income') group.incomeTotal += t.amount;
+        if (t.type === 'expense') group.expenseTotal += Store.baseAmountOf(t);
+        else if (t.type === 'income') group.incomeTotal += Store.baseAmountOf(t);
       }
       return groups;
     },
@@ -325,9 +325,15 @@ const DashboardView = {
         // into netWorth/assetTotal/percentages; cash and holdingsCost are
         // kept alongside so the row can show the split.
         const holdingsCost = Store.accountHoldingsCost(a);
-        const displayBalance = (Models.isLiabilityKind(a.kind) ? -balance : balance) + holdingsCost;
+        const rate = Models.rateOf(a.currency, Store.state.rates);
+        const nativeBalance = (Models.isLiabilityKind(a.kind) ? -balance : balance) + holdingsCost;
+        // Every total is in TWD; a foreign account keeps its own-currency
+        // figure alongside for the row to show.
+        const displayBalance = nativeBalance * rate;
         return {
           account: a,
+          nativeBalance,
+          foreign: rate !== 1 || (a.currency && a.currency !== 'TWD'),
           balance,
           cash: a.kind === 'brokerage' ? balance : null,
           holdingsCost,
@@ -415,6 +421,12 @@ const DashboardView = {
     // Net worth's marker: a diamond, so it isn't mistaken for the net line's circles.
     // "較上月 ▲12%" against the previous period; `goodWhenUp` says whether a
     // rise is the good direction (income, net) or the bad one (expense).
+    currencySymbol(code) {
+      return Models.currencySymbol(code);
+    },
+    fmtCur(n, code) {
+      return Models.formatMoney(n, code);
+    },
     kpiDelta(cur, prev, goodWhenUp) {
       const label = this.viewMode === 'year' ? '較去年' : '較上月';
       if (cur === prev) return { text: label + ' 持平', good: null };
@@ -648,12 +660,12 @@ const DashboardView = {
               <span class="icon-badge-sm" :style="{ background: (row.account.color || '#adb5bd') + '30' }">{{ row.icon }}</span>
               <span class="bar-name">{{ row.account.name }}</span>
               <span class="bar-amount" :class="{ negative: row.displayBalance < 0 }">
-                {{ fmt(row.displayBalance) }}<template v-if="!['credit_card', 'loan'].includes(row.account.kind)"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
+                <span v-if="row.foreign" class="muted">{{ currencySymbol(row.account.currency) }}{{ fmtCur(row.nativeBalance, row.account.currency) }} ≈ </span>{{ fmt(row.displayBalance) }}<template v-if="!['credit_card', 'loan'].includes(row.account.kind)"> · {{ fmtAssetPercent(row.displayBalance) }}</template>
               </span>
             </div>
             <div v-if="row.account.kind === 'brokerage'" class="account-split">
-              <span>現金 {{ fmt(row.cash) }}</span>
-              <span>持股成本 {{ fmt(row.holdingsCost) }}</span>
+              <span>現金 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.cash, row.account.currency) : fmt(row.cash) }}</span>
+              <span>持股成本 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.holdingsCost, row.account.currency) : fmt(row.holdingsCost) }}</span>
             </div>
           </div>
         </div>

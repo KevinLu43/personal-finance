@@ -72,16 +72,16 @@ const TransactionsView = {
     // section stays a flat list) — a category with just one transaction
     // that day still renders plainly via TransactionCategoryGroupList.
     expenseGroups() {
-      return Models.groupTransactionsByCategory(this.selectedDayExpenses, Store.state.categories);
+      return Models.groupTransactionsByCategory(this.selectedDayExpenses, Store.state.categories, Store.baseAmountOf);
     },
     incomeGroups() {
-      return Models.groupTransactionsByCategory(this.selectedDayIncomes, Store.state.categories);
+      return Models.groupTransactionsByCategory(this.selectedDayIncomes, Store.state.categories, Store.baseAmountOf);
     },
     selectedDayExpenseTotal() {
-      return this.selectedDayExpenses.reduce((sum, t) => sum + t.amount, 0);
+      return this.selectedDayExpenses.reduce((sum, t) => sum + Store.baseAmountOf(t), 0);
     },
     selectedDayIncomeTotal() {
-      return this.selectedDayIncomes.reduce((sum, t) => sum + t.amount, 0);
+      return this.selectedDayIncomes.reduce((sum, t) => sum + Store.baseAmountOf(t), 0);
     },
   },
   methods: {
