@@ -990,3 +990,5 @@ button.primary {
 .rate-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rate-label { min-width: 130px; }
 .rate-row input { width: 120px; }
+
+.asset-formula { margin: -2px 0 8px; }

@@ -345,6 +345,28 @@ const DashboardView = {
     netWorth() {
       return this.accountsWithBalance.reduce((sum, row) => sum + row.displayBalance, 0);
     },
+    // 資產 − 負債 = 淨值, spelled out under 資產總覽's heading — assetTotal
+    // already excludes every liability-kind row, so what's left out of
+    // netWorth is exactly the debt those rows carry.
+    liabilityTotal() {
+      return this.assetTotal - this.netWorth;
+    },
+    // Which foreign currencies actually have an active account right now —
+    // only those rates are shown, so a currency nobody holds doesn't clutter
+    // the summary just because Models.CURRENCIES lists it.
+    heldCurrencies() {
+      const codes = new Set(
+        this.accountsWithBalance
+          .filter((r) => r.account.currency && r.account.currency !== 'TWD')
+          .map((r) => r.account.currency)
+      );
+      return [...codes];
+    },
+    rateSummaryText() {
+      return this.heldCurrencies
+        .map((code) => `1 ${code} = ${Models.rateOf(code, Store.state.rates)}`)
+        .join('、');
+    },
     // The percentage base for 資產總覽's rows — assets only. A credit card
     // is debt, not a slice of what you own, so it still counts toward
     // netWorth above (pulling it down) but is left out of this total and
@@ -649,6 +671,8 @@ const DashboardView = {
 
       <section class="panel">
         <h3>資產總覽<span class="muted"> · 淨值 {{ fmt(netWorth) }}</span></h3>
+        <div v-if="liabilityTotal !== 0" class="muted asset-formula">資產 {{ fmt(assetTotal) }} − 負債 {{ fmt(liabilityTotal) }} = 淨值 {{ fmt(netWorth) }}</div>
+        <div v-if="heldCurrencies.length" class="muted asset-formula">匯率 · {{ rateSummaryText }}(TWD,可在「帳戶」頁調整)</div>
         <div v-if="accountsWithBalance.length === 0" class="empty">還沒有帳戶,先到「帳戶」分頁新增一個</div>
         <div v-for="g in accountGroups" :key="g.label" class="subsection">
           <div class="subsection-header">
