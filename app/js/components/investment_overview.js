@@ -152,6 +152,12 @@ const InvestmentOverviewView = {
     marketLabel() {
       return this.selectedMarket === 'TW' ? '台股' : '美股';
     },
+    // Everything below this point native to the active tab — TWD for 台股,
+    // USD for 美股 — so a 美股 total shows both what it actually settled in
+    // and, alongside it, the TWD equivalent every other screen's totals use.
+    currentCurrency() {
+      return Models.marketCurrency(this.selectedMarket);
+    },
     yearMonth() {
       return `${this.year}-${String(this.month).padStart(2, '0')}`;
     },
@@ -205,6 +211,17 @@ const InvestmentOverviewView = {
     // from a stock priced at 157.12 with a five-dollar fee baked in.
     fmtPrice(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+    },
+    currencySymbol(code) {
+      return Models.currencySymbol(code);
+    },
+    fmtCur(n, code) {
+      return Models.formatMoney(n, code);
+    },
+    // A native-currency amount converted to TWD at the current rate — for
+    // the ≈ NT$ line next to a 美股 total.
+    toBase(n) {
+      return n * Models.rateOf(this.currentCurrency, Store.state.rates);
     },
     // 持股比例's legend: a Taiwan holding reads as its company name (a bare
     // four-digit code says nothing at a glance), falling back to the code when
@@ -297,19 +314,21 @@ const InvestmentOverviewView = {
             <div class="subsection-header">
               <span>{{ marketLabel }}</span>
               <span :class="currentRealizedPL >= 0 ? 'positive' : 'negative'">
-                已實現 {{ currentRealizedPL >= 0 ? '+' : '' }}{{ fmt(currentRealizedPL) }}
+                已實現 {{ currentRealizedPL >= 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(currentRealizedPL, currentCurrency) }}
+                <span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ NT$ {{ fmt(toBase(currentRealizedPL)) }})</span>
               </span>
             </div>
             <div v-for="h in currentHoldings" :key="h.ticker" class="list-row">
               <div class="list-row-main">
                 <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span></div>
                 <div class="list-row-sub">
-                  {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + fmtPrice(h.avgCost)) : '已出清' }}
+                  {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost)) : '已出清' }}
                   <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
                 </div>
               </div>
               <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">
-                {{ h.realizedPL > 0 ? '+' : '' }}{{ fmt(h.realizedPL) }}
+                {{ h.realizedPL > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(h.realizedPL, currentCurrency) }}
+                <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.realizedPL)) }}</div>
               </div>
             </div>
           </section>
@@ -344,8 +363,8 @@ const InvestmentOverviewView = {
             <div class="subsection-header clickable" @click="toggleDateExpand(g.date)">
               <span>{{ g.date }}</span>
               <span>
-                <span v-if="g.buyTotal" class="negative">-{{ fmt(g.buyTotal) }}</span>
-                <span v-if="g.sellTotal" class="positive"> +{{ fmt(g.sellTotal) }}</span>
+                <span v-if="g.buyTotal" class="negative">-{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.buyTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBase(g.buyTotal)) }})</span></span>
+                <span v-if="g.sellTotal" class="positive"> +{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.sellTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBase(g.sellTotal)) }})</span></span>
                 <span class="expand-arrow" :class="{ open: expandedDate === g.date }">›</span>
               </span>
             </div>

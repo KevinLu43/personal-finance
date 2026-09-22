@@ -14,6 +14,22 @@ const InvestmentRowItem = {
       const a = Store.state.accounts.find((x) => x.id === this.investment.accountId);
       return a ? a.name : '(已刪除帳戶)';
     },
+    // A trade settles in its own market's currency (US = USD) — shown as such
+    // everywhere a trade amount appears, with a TWD equivalent alongside so it
+    // reads against every other TWD figure in the app (the calendar cell's
+    // day total among them) instead of looking like a stray TWD number.
+    currency() {
+      return Models.marketCurrency(this.investment.market);
+    },
+    nativeAmountText() {
+      const symbol = this.currency === 'TWD' ? '' : Models.currencySymbol(this.currency);
+      return symbol + Models.formatMoney(this.net, this.currency);
+    },
+    baseAmountText() {
+      if (this.currency === 'TWD') return '';
+      const base = this.net * Models.rateOf(this.currency, Store.state.rates);
+      return '≈ NT$ ' + Math.round(base).toLocaleString('zh-TW');
+    },
   },
   methods: {
     fmt(n) {
@@ -31,7 +47,8 @@ const InvestmentRowItem = {
         </div>
       </div>
       <div class="list-row-amount" :class="{ negative: investment.action === 'buy', positive: investment.action === 'sell' }">
-        {{ investment.action === 'buy' ? '-' : '+' }}{{ fmt(net) }}
+        {{ investment.action === 'buy' ? '-' : '+' }}{{ nativeAmountText }}
+        <div v-if="baseAmountText" class="list-row-sub">{{ baseAmountText }}</div>
       </div>
       <button class="row-delete" @click.stop="$emit('remove', investment)" aria-label="刪除">✕</button>
     </div>
@@ -415,6 +432,12 @@ const InvestmentsView = {
     usSellTotal() {
       return this.usInvestments.filter((i) => i.action === 'sell').reduce((s, i) => s + Models.investmentAmounts(i).net, 0);
     },
+    usBuyBase() {
+      return this.usBuyTotal * Models.rateOf('USD', Store.state.rates);
+    },
+    usSellBase() {
+      return this.usSellTotal * Models.rateOf('USD', Store.state.rates);
+    },
   },
   methods: {
     shiftMonth(delta) {
@@ -445,6 +468,12 @@ const InvestmentsView = {
     },
     fmt(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+    },
+    currencySymbol(code) {
+      return Models.currencySymbol(code);
+    },
+    fmtCur(n, code) {
+      return Models.formatMoney(n, code);
     },
   },
   template: `
@@ -506,8 +535,8 @@ const InvestmentsView = {
             <div class="subsection-header">
               <span>美股</span>
               <span>
-                <span v-if="usBuyTotal" class="negative">-{{ fmt(usBuyTotal) }}</span>
-                <span v-if="usSellTotal" class="positive"> +{{ fmt(usSellTotal) }}</span>
+                <span v-if="usBuyTotal" class="negative">-{{ currencySymbol('USD') }}{{ fmtCur(usBuyTotal, 'USD') }}<span class="muted"> (≈ {{ fmt(usBuyBase) }})</span></span>
+                <span v-if="usSellTotal" class="positive"> +{{ currencySymbol('USD') }}{{ fmtCur(usSellTotal, 'USD') }}<span class="muted"> (≈ {{ fmt(usSellBase) }})</span></span>
               </span>
             </div>
             <InvestmentTickerGroupList :groups="usGroups" @edit="openEdit" @remove="remove" />
