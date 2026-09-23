@@ -146,24 +146,26 @@ const InvestmentFormModal = {
     tickerIsEtf() {
       return Models.isTaiwanEtfTicker(this.form.ticker);
     },
-    // A sell can only ever be against something actually held, in this
-    // account's own market — free-typing a ticker to sell risked a typo
-    // silently opening a short position the holdings math never expects.
+    // A sell can only ever be against something actually held in *this*
+    // account — a different 證券交割 account's shares aren't sellable here,
+    // real brokerages don't let one sell what another is custodying — and
+    // free-typing a ticker risked a typo silently opening a short position
+    // the holdings math never expects.
     heldTickers() {
       if (!this.selectedAccount) return [];
       return Models.holdingsSummary(Store.state.investments)
-        .filter((h) => h.market === this.selectedAccount.market && h.quantity > 0);
+        .filter((h) => h.accountId === this.selectedAccount.id && h.quantity > 0);
     },
     // Shares of the chosen ticker that may actually be sold: what's held in
-    // this market less anything pledged as loan collateral. Counted without
+    // this account less anything pledged as loan collateral. Counted without
     // the trade being edited, so it doesn't block its own quantity.
     sellable() {
       if (!this.selectedAccount || !this.form.ticker) return 0;
-      return Store.sellableQuantity(this.selectedAccount.market, this.form.ticker.trim().toUpperCase(), this.isNew ? null : this.editingId);
+      return Store.sellableQuantity(this.selectedAccount.id, this.selectedAccount.market, this.form.ticker.trim().toUpperCase(), this.isNew ? null : this.editingId);
     },
     pledgedForTicker() {
       if (!this.selectedAccount || !this.form.ticker) return 0;
-      return Store.pledgedQuantity(this.selectedAccount.market, this.form.ticker.trim().toUpperCase());
+      return Store.pledgedQuantity(this.selectedAccount.id, this.selectedAccount.market, this.form.ticker.trim().toUpperCase());
     },
     // Only a sell is limited; null means nothing to complain about.
     sellError() {
@@ -178,7 +180,7 @@ const InvestmentFormModal = {
     // fix a typo doesn't silently blank or swap its ticker out from under it.
     sellTickerOptions() {
       const list = this.heldTickers
-        .map((h) => ({ ticker: h.ticker, quantity: Store.sellableQuantity(h.market, h.ticker, this.isNew ? null : this.editingId) }))
+        .map((h) => ({ ticker: h.ticker, quantity: Store.sellableQuantity(h.accountId, h.market, h.ticker, this.isNew ? null : this.editingId) }))
         .filter((o) => o.quantity > 0);
       if (this.form.ticker && !list.some((o) => o.ticker === this.form.ticker)) {
         list.unshift({ ticker: this.form.ticker, quantity: null });

@@ -289,8 +289,15 @@ const InvestmentOverviewView = {
     nameOf(h) {
       return window.tickerName(h.market, h.ticker);
     },
+    // Holdings are per-account now — shown next to the ticker so two
+    // accounts holding the same stock read as the separate rows they are,
+    // not a duplicate.
+    accountName(h) {
+      const a = Store.state.accounts.find((x) => x.id === h.accountId);
+      return a ? a.name : '(已刪除帳戶)';
+    },
     pledgedFor(h) {
-      return Store.pledgedQuantity(h.market, h.ticker);
+      return Store.pledgedQuantity(h.accountId, h.market, h.ticker);
     },
     fmtPercent(amount) {
       return this.portfolioTotal > 0 ? (amount / this.portfolioTotal * 100).toFixed(1) + '%' : '0%';
@@ -315,7 +322,7 @@ const InvestmentOverviewView = {
       this.expandedDate = this.expandedDate === date ? null : date;
     },
     holdingKey(h) {
-      return h.market + ':' + h.ticker;
+      return h.accountId + ':' + h.market + ':' + h.ticker;
     },
     toggleHoldingExpand(h) {
       const key = this.holdingKey(h);
@@ -327,7 +334,7 @@ const InvestmentOverviewView = {
     // hide most of what built up that total. Newest first, same order 交易明細 uses.
     holdingTrades(h) {
       return Store.state.investments
-        .filter((i) => !i.isDeleted && i.market === h.market && i.ticker === h.ticker)
+        .filter((i) => !i.isDeleted && i.accountId === h.accountId && i.market === h.market && i.ticker === h.ticker)
         .sort((a, b) => {
           if (a.date !== b.date) return a.date < b.date ? 1 : -1;
           return a.updatedAt < b.updatedAt ? 1 : -1;
@@ -425,7 +432,7 @@ const InvestmentOverviewView = {
                 <div class="list-row-main">
                   <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span></div>
                   <div class="list-row-sub">
-                    {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost)) : '已出清' }}
+                    {{ accountName(h) }} · {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost)) : '已出清' }}
                     <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
                   </div>
                 </div>

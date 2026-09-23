@@ -514,14 +514,20 @@ function groupInvestmentsByTicker(investments) {
   return groups.sort((a, b) => a.ticker.localeCompare(b.ticker));
 }
 
-// One row per market+ticker ever traded: current quantity held, its moving
-// average cost, and realised P&L. This is the standard moving-average-cost
-// method (the same one the operator's own spreadsheet used): a buy adds to
-// the pool at its own cost; a sell removes shares from the pool *at the
+// One row per account+market+ticker ever traded: current quantity held, its
+// moving average cost, and realised P&L. This is the standard moving-average-
+// cost method (the same one the operator's own spreadsheet used): a buy adds
+// to the pool at its own cost; a sell removes shares from the pool *at the
 // average cost prevailing at that moment* and banks the difference between
 // what it actually sold for and that cost as realised P&L. The average only
 // moves on a buy — a sell shrinks the pool proportionally without changing
 // the average, which is why processing order (oldest first) matters.
+//
+// Scoped per account, not pooled across every account that ever traded a
+// ticker — two 證券交割 accounts are two different custodians (real
+// brokerages don't let one sell shares another is holding), so the same
+// ticker held in two accounts is two separate rows here with their own cost
+// basis, not one merged position.
 //
 // This has no notion of a current market price, so there is no unrealised
 // P&L or current value here — only what buying and selling actually did.
@@ -529,14 +535,14 @@ function holdingsSummary(investments) {
   const byKey = new Map();
   for (const inv of investments) {
     if (inv.isDeleted) continue;
-    const key = `${inv.market}:${inv.ticker}`;
+    const key = `${inv.accountId}:${inv.market}:${inv.ticker}`;
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(inv);
   }
 
   const holdings = [];
   for (const [key, list] of byKey) {
-    const [market, ticker] = key.split(':');
+    const [accountId, market, ticker] = key.split(':');
     const ordered = list
       .slice()
       .sort((a, b) => (a.date === b.date ? a.updatedAt.localeCompare(b.updatedAt) : a.date < b.date ? -1 : 1));
@@ -561,6 +567,7 @@ function holdingsSummary(investments) {
     }
 
     holdings.push({
+      accountId,
       market,
       ticker,
       quantity,
@@ -891,12 +898,17 @@ function suggestTickerCodes(directory, text) {
 // only counts once the buys before it do), optionally narrowed to one
 // account, optionally ignoring one trade — the sell form passes the trade it
 // is editing so that trade's own quantity isn't counted against itself.
+// holdingsSummary is itself per-account now, so omitting accountId sums
+// every account's own row instead of the single (arbitrary) one a plain
+// .find() would have picked — every real caller always passes accountId
+// (accounts don't share holdings), but this stays correct either way.
 function heldQuantityOf(investments, { market, ticker, accountId, excludeId }) {
   const list = investments.filter(
     (i) => i.market === market && i.ticker === ticker && (!accountId || i.accountId === accountId) && i.id !== excludeId
   );
-  const h = holdingsSummary(list).find((x) => x.market === market && x.ticker === ticker);
-  return h ? Math.max(0, h.quantity) : 0;
+  return holdingsSummary(list)
+    .filter((x) => x.market === market && x.ticker === ticker)
+    .reduce((sum, h) => sum + Math.max(0, h.quantity), 0);
 }
 
 // Shares of one market+ticker locked by active (unreleased) pledges,

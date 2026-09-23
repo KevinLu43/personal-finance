@@ -435,18 +435,21 @@ async function releasePledge(id, date) {
   state.pledges[idx] = updated;
 }
 
-// What the sell form may sell: everything held in the market for that
-// ticker, less what any active pledge has locked. excludeInvestmentId is
-// the trade being edited, so its own quantity isn't counted against itself.
-function sellableQuantity(market, ticker, excludeInvestmentId) {
+// What the sell form may sell: everything this one account holds of that
+// ticker, less what any active pledge (also on this account) has locked.
+// Scoped to accountId — accounts don't share holdings, so a sell can only
+// ever draw down what was bought through the same 證券交割 account.
+// excludeInvestmentId is the trade being edited, so its own quantity isn't
+// counted against itself.
+function sellableQuantity(accountId, market, ticker, excludeInvestmentId) {
   return (
-    Models.heldQuantityOf(state.investments, { market, ticker, excludeId: excludeInvestmentId }) -
-    Models.pledgedQuantityOf(state.pledges, { market, ticker })
+    Models.heldQuantityOf(state.investments, { market, ticker, accountId, excludeId: excludeInvestmentId }) -
+    Models.pledgedQuantityOf(state.pledges, { market, ticker, accountId })
   );
 }
 
-function pledgedQuantity(market, ticker) {
-  return Models.pledgedQuantityOf(state.pledges, { market, ticker });
+function pledgedQuantity(accountId, market, ticker) {
+  return Models.pledgedQuantityOf(state.pledges, { market, ticker, accountId });
 }
 
 // --- Categories ---
