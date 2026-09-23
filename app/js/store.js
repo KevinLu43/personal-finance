@@ -743,10 +743,31 @@ function exportBackupData() {
   return Models.buildBackup({ ...state, rates: { ...state.rates } });
 }
 
+// The destructive counterpart to exportBackupData: wipes every table and
+// replaces it with a parsed backup's data, then reloads state from what was
+// just written. The caller (accounts.js) is responsible for validating the
+// file (Models.validateBackup) and confirming with the operator first —
+// this just does the swap. loadAll()'s own migrations run again afterward,
+// so restoring an older backup (missing a field added since) still
+// backfills the same way loading one from disk always has.
+async function restoreFromBackup(backup) {
+  const data = backup.data;
+  const tableStores = ['accounts', 'categories', 'labels', 'transactions', 'transactionLabels', 'investments', 'recurringTransactions', 'pledges'];
+  for (const storeName of tableStores) await Db.clear(storeName);
+  await Db.clear('settings');
+  for (const storeName of tableStores) {
+    const rows = Array.isArray(data[storeName]) ? data[storeName] : [];
+    if (rows.length) await Db.putAll(storeName, rows);
+  }
+  if (data.exchangeRates) await Db.put('settings', { id: 'rates', values: data.exchangeRates });
+  await loadAll();
+}
+
 window.Store = {
   state,
   init,
   exportBackupData,
+  restoreFromBackup,
   addAccount,
   updateAccount,
   setAccountArchived,

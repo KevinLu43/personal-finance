@@ -72,6 +72,31 @@ async function put(storeName, value) {
   });
 }
 
+// Writes every row in one transaction instead of one `put` (and one
+// transaction) per row — restoreFromBackup can be hundreds of rows.
+async function putAll(storeName, values) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    for (const value of values) store.put(value);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Empties a store entirely — restoreFromBackup's first step, so a restored
+// table never ends up with leftover rows the backup never mentioned.
+async function clear(storeName) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 async function remove(storeName, id) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -92,4 +117,4 @@ async function countAll(storeName) {
   });
 }
 
-window.Db = { STORES, getAll, put, remove, countAll };
+window.Db = { STORES, getAll, put, putAll, clear, remove, countAll };

@@ -78,6 +78,9 @@ const AccountRowItem = {
       const today = Models.localToday();
       return this.activePledges.reduce((sum, p) => sum + Store.pledgeAccruedInterest(p, today), 0).toLocaleString('zh-TW');
     },
+    icon() {
+      return Models.accountIcon(this.account);
+    },
   },
   template: `
     <div class="list-row" :class="{ archived: account.isArchived, dragging }" :data-drag-list="listId" :data-drag-row="index">
@@ -141,6 +144,7 @@ const AccountsView = {
       rateFieldsTouched: false, // once the operator edits a rate, market changes stop overwriting it
       iconTouched: false, // once the operator picks an icon by hand, kind changes stop overwriting it
       backupMessage: '',
+      restoring: false, // true while a restore is in flight, to disable both buttons
     };
   },
   computed: {
@@ -406,6 +410,37 @@ const AccountsView = {
         this.backupMessage = '匯出失敗:' + err.message;
       }
     },
+    async importBackup() {
+      this.backupMessage = '';
+      let picked;
+      try {
+        picked = await Backup.loadBackupFile();
+      } catch (err) {
+        this.backupMessage = '讀取失敗:' + err.message;
+        return;
+      }
+      if (!picked.ok) {
+        if (!picked.cancelled) this.backupMessage = '讀取失敗,請確認選的是備份 JSON 檔。';
+        return;
+      }
+      const invalidReason = Models.validateBackup(picked.data);
+      if (invalidReason) {
+        this.backupMessage = invalidReason;
+        return;
+      }
+      const exportedDate = picked.data.exportedAt ? picked.data.exportedAt.slice(0, 10) : '未知';
+      const msg = `匯入會清空目前所有資料(帳戶、分類、標籤、交易、投資、固定支出、質押、匯率設定),換成這份備份的內容,且無法復原。這份備份的匯出日期:${exportedDate}。確定要匯入嗎？`;
+      if (!confirm(msg)) return;
+      this.restoring = true;
+      try {
+        await Store.restoreFromBackup(picked.data);
+        this.backupMessage = '匯入完成。';
+      } catch (err) {
+        this.backupMessage = '匯入失敗:' + err.message;
+      } finally {
+        this.restoring = false;
+      }
+    },
   },
   template: `
     <div class="view">
@@ -491,7 +526,9 @@ const AccountsView = {
       <section class="panel span-2">
         <h3>資料備份</h3>
         <p class="muted" style="margin: -4px 0 10px;">按下按鈕後請選擇要匯出到的路徑</p>
-        <button class="primary" @click="exportBackup">匯出備份</button>
+        <button class="primary" :disabled="restoring" @click="exportBackup">匯出備份</button>
+        <button :disabled="restoring" @click="importBackup">匯入備份</button>
+        <p class="field-hint negative" style="margin: 8px 0 0;">匯入會清空目前所有資料,換成備份檔的內容,且無法復原,請先確認選對檔案</p>
         <p v-if="backupMessage" class="muted" style="margin-top: 8px;">{{ backupMessage }}</p>
       </section>
       </div>

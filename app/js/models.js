@@ -1188,10 +1188,26 @@ function buildBackup(tables) {
   };
 }
 
+// Sanity-checks a file the operator picked to import, before
+// Store.restoreFromBackup is ever allowed near it — a wrong or unrelated
+// JSON file should fail with a plain-language reason instead of silently
+// wiping the database with garbage. Deliberately lenient about *which*
+// tables exist (an old backup taken before, say, pledges existed should
+// still restore) — only checks that this looks like buildBackup's shape.
+function validateBackup(parsed) {
+  if (!parsed || typeof parsed !== 'object') return '不是有效的 JSON 檔案';
+  if (!parsed.data || typeof parsed.data !== 'object') return '不是這個 App 的備份檔(缺少 data)';
+  if (!Array.isArray(parsed.data.accounts) || !Array.isArray(parsed.data.transactions)) {
+    return '不是這個 App 的備份檔(缺少 accounts 或 transactions)';
+  }
+  return null;
+}
+
 window.Models = {
   uuid,
   nowIso,
   localToday,
+  validateBackup,
   SEED_CATEGORIES,
   buildBackup,
   newAccount,
