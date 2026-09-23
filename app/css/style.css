@@ -188,6 +188,9 @@ body {
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
 .bar-row.clickable { cursor: pointer; }
+/* 資產配置's legend rows double as tab shortcuts — the currently open tab's
+   row reads bold so clicking through the donut still shows where you are. */
+.bar-row.active .bar-name { font-weight: 700; color: var(--ink); }
 
 /* Cash / holdings split under a 證券交割 row in 資產總覽 — indented past the
    icon so it reads as belonging to the row above it. */

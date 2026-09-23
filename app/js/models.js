@@ -380,6 +380,19 @@ function isTaiwanEtfTicker(ticker) {
   return /^00/.test((ticker || '').trim());
 }
 
+// Which of 投資總覽's TW buckets a ticker belongs in: 'etf' | 'listed' | 'otc'.
+// ETF takes priority over listing venue — an ETF holder thinks of it as its
+// own asset class, not "which exchange lists it". TICKER_BOARD_TW (built by
+// tools/build_ticker_directory.py from the MOPS company lists) only knows
+// 'listed'/'otc'/'emerging'; 興櫃 and anything the directory doesn't
+// recognise fall into 'otc' so a holding never silently drops off every tab.
+function twInvestmentCategory(ticker) {
+  const code = (ticker || '').trim();
+  if (isTaiwanEtfTicker(code)) return 'etf';
+  const board = window.TickerBoard && window.TickerBoard[code];
+  return board === 'listed' ? 'listed' : 'otc';
+}
+
 // Fee/tax auto-fill now reads the settlement account's own configured
 // rates rather than a hardcoded market table — the account is where a
 // real discount or plan actually lives (docs: PLAN discussion with the
@@ -1233,6 +1246,7 @@ window.Models = {
   newInvestment,
   defaultRatesFor,
   isTaiwanEtfTicker,
+  twInvestmentCategory,
   suggestedFee,
   suggestedTax,
   investmentAmounts,

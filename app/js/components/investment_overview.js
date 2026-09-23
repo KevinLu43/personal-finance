@@ -5,6 +5,11 @@
 
 const INVESTMENT_ACTION_LABELS = { buy: '買入', sell: '賣出' };
 
+// 資產配置's four fixed colors, keyed by categoryOptions' value — distinct
+// from --income/--expense/--warning elsewhere so this donut never reads as
+// "gain/loss" by accident.
+const ALLOCATION_COLORS = { listed: '#3d5a80', otc: '#bc6c25', etf: '#588157', US: '#6a4c93' };
+
 // Codes known to the directory, per market — built once, the lists are static.
 let knownTickerCodes = null;
 function isKnownTickerCode(market, code) {
@@ -99,7 +104,7 @@ const InvestmentOverviewView = {
   data() {
     const now = new Date();
     return {
-      selectedMarket: 'TW',
+      selectedCategory: 'listed', // 'listed' | 'otc' | 'etf' | 'US'
       year: now.getFullYear(),
       month: now.getMonth() + 1,
       query: '',
@@ -131,11 +136,56 @@ const InvestmentOverviewView = {
       // In TWD, since it spans both markets (US holdings are in USD).
       return this.allHoldings.reduce((s, h) => s + h.realizedPL * Models.rateOf(Models.marketCurrency(h.market), Store.state.rates), 0);
     },
-    // Everything below this point is scoped to whichever market tab is
-    // active — one owner for "which market am I looking at" instead of each
-    // section re-filtering by selectedMarket its own way.
+    // The four tabs: TW's 上市/上櫃/ETF (Models.twInvestmentCategory, from
+    // the ticker directory's listing-venue data plus the ETF code heuristic)
+    // sit alongside 美股 as its own tab, same as before.
+    categoryOptions() {
+      return [
+        { value: 'listed', label: '上市' },
+        { value: 'otc', label: '上櫃' },
+        { value: 'etf', label: 'ETF' },
+        { value: 'US', label: '美股' },
+      ];
+    },
+    categoryLabel() {
+      return (this.categoryOptions.find((o) => o.value === this.selectedCategory) || {}).label || '';
+    },
+    // The underlying market a tab's holdings settle in — every TW tab is
+    // 'TW', only 美股 is 'US'. Drives currentCurrency and the new-trade
+    // form's default account below.
+    currentMarket() {
+      return this.selectedCategory === 'US' ? 'US' : 'TW';
+    },
+    // 資產配置: what the whole portfolio (every tab, current holdings only)
+    // is worth at cost, split the same four ways the tabs are — one figure
+    // to look at before drilling into any single tab. Cost, not live price
+    // (this app has no quotes), in TWD so a 美股 holding can sit in the same
+    // total as a TW one; ALLOCATION_COLORS keys by categoryOptions' value so
+    // this and the donut/legend below always agree on which color is which.
+    allocationBreakdown() {
+      const currentOnly = this.allHoldings.filter((h) => h.quantity > 0);
+      return this.categoryOptions
+        .map((opt) => {
+          const rows = opt.value === 'US'
+            ? currentOnly.filter((h) => h.market === 'US')
+            : currentOnly.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === opt.value);
+          const amount = rows.reduce((s, h) => s + h.costBasis * Models.rateOf(Models.marketCurrency(h.market), Store.state.rates), 0);
+          return { value: opt.value, category: { name: opt.label, color: ALLOCATION_COLORS[opt.value] }, amount };
+        })
+        .filter((row) => row.amount > 0);
+    },
+    allocationTotal() {
+      return this.allocationBreakdown.reduce((s, row) => s + row.amount, 0);
+    },
+    allocationSegments() {
+      return Models.buildDonutSegments(this.allocationBreakdown);
+    },
+    // Everything below this point is scoped to whichever tab is active —
+    // one owner for "which category am I looking at" instead of each
+    // section re-filtering by selectedCategory its own way.
     currentHoldings() {
-      return this.allHoldings.filter((h) => h.market === this.selectedMarket);
+      if (this.selectedCategory === 'US') return this.allHoldings.filter((h) => h.market === 'US');
+      return this.allHoldings.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === this.selectedCategory);
     },
     currentRealizedPL() {
       return this.currentHoldings.reduce((s, h) => s + h.realizedPL, 0);
@@ -149,14 +199,12 @@ const InvestmentOverviewView = {
     portfolioSegments() {
       return Models.buildDonutSegments(this.portfolioBreakdown);
     },
-    marketLabel() {
-      return this.selectedMarket === 'TW' ? '台股' : '美股';
-    },
-    // Everything below this point native to the active tab — TWD for 台股,
-    // USD for 美股 — so a 美股 total shows both what it actually settled in
-    // and, alongside it, the TWD equivalent every other screen's totals use.
+    // Everything below this point native to the active tab — TWD for every
+    // TW tab, USD for 美股 — so a 美股 total shows both what it actually
+    // settled in and, alongside it, the TWD equivalent every other screen's
+    // totals use.
     currentCurrency() {
-      return Models.marketCurrency(this.selectedMarket);
+      return Models.marketCurrency(this.currentMarket);
     },
     yearMonth() {
       return `${this.year}-${String(this.month).padStart(2, '0')}`;
@@ -171,7 +219,8 @@ const InvestmentOverviewView = {
     filteredInvestments() {
       const q = this.query.trim().toLowerCase();
       return Store.state.investments
-        .filter((i) => !i.isDeleted && i.market === this.selectedMarket && i.date.startsWith(this.yearMonth))
+        .filter((i) => !i.isDeleted && i.date.startsWith(this.yearMonth))
+        .filter((i) => (this.selectedCategory === 'US' ? i.market === 'US' : i.market === 'TW' && Models.twInvestmentCategory(i.ticker) === this.selectedCategory))
         .filter((i) => this.actionFilters.length === 0 || this.actionFilters.includes(i.action))
         .filter((i) => {
           if (!q) return true;
@@ -227,7 +276,7 @@ const InvestmentOverviewView = {
     // four-digit code says nothing at a glance), falling back to the code when
     // the directory has none; US tickers are already what people recognise.
     legendName(ticker) {
-      return this.selectedMarket === 'TW' ? window.tickerName('TW', ticker) || ticker : ticker;
+      return this.currentMarket === 'TW' ? window.tickerName('TW', ticker) || ticker : ticker;
     },
     nameOf(h) {
       return window.tickerName(h.market, h.ticker);
@@ -237,6 +286,9 @@ const InvestmentOverviewView = {
     },
     fmtPercent(amount) {
       return this.portfolioTotal > 0 ? (amount / this.portfolioTotal * 100).toFixed(1) + '%' : '0%';
+    },
+    fmtAllocationPercent(amount) {
+      return this.allocationTotal > 0 ? (amount / this.allocationTotal * 100).toFixed(1) + '%' : '0%';
     },
     shiftMonth(delta) {
       let m = this.month + delta;
@@ -281,12 +333,35 @@ const InvestmentOverviewView = {
         <button class="primary" @click="fixOpen = true">補上代號</button>
       </div>
 
+      <section v-if="allocationBreakdown.length" class="panel">
+        <h3>資產配置<span class="muted"> · 上市/上櫃/ETF/美股,持股成本換算台幣</span></h3>
+        <svg viewBox="0 0 100 100" class="donut-chart">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
+          <circle
+            v-for="(seg, i) in allocationSegments" :key="i"
+            cx="50" cy="50" r="40" fill="none"
+            :stroke="seg.color" stroke-width="14"
+            :stroke-dasharray="seg.dash + ' ' + seg.gap"
+            :stroke-dashoffset="seg.dashOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div
+          v-for="row in allocationBreakdown" :key="row.value" class="bar-row clickable"
+          :class="{ active: selectedCategory === row.value }"
+          @click="selectedCategory = row.value"
+        >
+          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+          <span class="bar-name">{{ row.category.name }}</span>
+          <span class="bar-amount">{{ fmtAllocationPercent(row.amount) }} · {{ fmt(row.amount) }}</span>
+        </div>
+      </section>
+
       <div class="mode-toggle">
-        <button :class="{ active: selectedMarket === 'TW' }" @click="selectedMarket = 'TW'">台股</button>
-        <button :class="{ active: selectedMarket === 'US' }" @click="selectedMarket = 'US'">美股</button>
+        <button v-for="opt in categoryOptions" :key="opt.value" :class="{ active: selectedCategory === opt.value }" @click="selectedCategory = opt.value">{{ opt.label }}</button>
       </div>
 
-      <div v-if="currentHoldings.length === 0" class="empty">{{ marketLabel }}還沒有任何投資交易</div>
+      <div v-if="currentHoldings.length === 0" class="empty">{{ categoryLabel }}還沒有任何投資交易</div>
 
       <div class="panel-grid">
         <template v-if="currentHoldings.length > 0">
@@ -312,7 +387,7 @@ const InvestmentOverviewView = {
 
           <section class="panel">
             <div class="subsection-header">
-              <span>{{ marketLabel }}</span>
+              <span>{{ categoryLabel }}</span>
               <span :class="currentRealizedPL >= 0 ? 'positive' : 'negative'">
                 已實現 {{ currentRealizedPL >= 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(currentRealizedPL, currentCurrency) }}
                 <span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ NT$ {{ fmt(toBase(currentRealizedPL)) }})</span>
@@ -381,7 +456,7 @@ const InvestmentOverviewView = {
         v-if="editingId"
         :editing-id="editingId"
         :default-date="formDefaultDate"
-        :default-market="selectedMarket"
+        :default-market="currentMarket"
         @close="onFormClosed"
       />
     </div>
