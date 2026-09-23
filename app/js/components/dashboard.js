@@ -394,7 +394,7 @@ const DashboardView = {
         // into netWorth/assetTotal/percentages; cash and holdingsCost are
         // kept alongside so the row can show the split.
         const holdingsCost = Store.accountHoldingsCost(a);
-        const rate = Models.rateOf(a.currency, Store.state.rates);
+        const rate = Models.rateOf(a.currency, Store.state.rateHistory);
         const nativeBalance = (Models.isLiabilityKind(a.kind) ? -balance : balance) + holdingsCost;
         // Every total is in TWD; a foreign account keeps its own-currency
         // figure alongside for the row to show.
@@ -433,7 +433,7 @@ const DashboardView = {
     },
     rateSummaryText() {
       return this.heldCurrencies
-        .map((code) => `1 ${code} = ${Models.rateOf(code, Store.state.rates)}`)
+        .map((code) => `1 ${code} = ${Models.rateOf(code, Store.state.rateHistory)}`)
         .join('、');
     },
     // The percentage base for 資產總覽's rows — assets only. A credit card

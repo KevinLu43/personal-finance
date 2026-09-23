@@ -201,12 +201,14 @@ const TransactionFormModal = {
     crossCurrency() {
       return this.form.type === 'transfer' && !!this.form.toAccountId && this.fromCurrency !== this.toCurrency;
     },
-    // What the receiving side would get at the current rates.
+    // What the receiving side would get, at the rate in effect on the
+    // transfer's own date (not necessarily today, for a backdated entry).
     suggestedToAmount() {
       const amount = Number(this.form.amount);
       if (!amount) return 0;
-      const rates = Store.state.rates;
-      const value = (amount * Models.rateOf(this.fromCurrency, rates)) / Models.rateOf(this.toCurrency, rates);
+      const rates = Store.state.rateHistory;
+      const date = this.form.date;
+      const value = (amount * Models.rateOf(this.fromCurrency, rates, date)) / Models.rateOf(this.toCurrency, rates, date);
       return this.toCurrency === 'USD' ? Math.round(value * 100) / 100 : Math.round(value);
     },
     suggestedText() {

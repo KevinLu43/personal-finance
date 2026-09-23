@@ -33,7 +33,7 @@ const AccountRowItem = {
       return this.isForeign ? Models.currencySymbol(this.account.currency) + text : text;
     },
     foreignBase() {
-      const twd = this.nativeAmount * Models.rateOf(this.account.currency, Store.state.rates);
+      const twd = this.nativeAmount * Models.rateOf(this.account.currency, Store.state.rateHistory);
       return '≈ NT$ ' + Math.round(twd).toLocaleString('zh-TW');
     },
     isNegative() {
@@ -145,6 +145,8 @@ const AccountsView = {
       iconTouched: false, // once the operator picks an icon by hand, kind changes stop overwriting it
       backupMessage: '',
       restoring: false, // true while a restore is in flight, to disable both buttons
+      rateEffectiveDate: { USD: Models.localToday(), JPY: Models.localToday() }, // 匯率設定's date picker, per currency
+      openRateHistoryCode: null, // which currency's past-rates list is open, one at a time
     };
   },
   computed: {
@@ -208,8 +210,17 @@ const AccountsView = {
     currencies() {
       return Models.CURRENCIES;
     },
+    // Today's rate for each currency — what the input shows before the
+    // operator touches it, and what every "current" figure elsewhere
+    // (account rows, 資產總覽, …) is actually using right now.
     rates() {
-      return Store.state.rates;
+      return {
+        USD: Models.rateOf('USD', Store.state.rateHistory),
+        JPY: Models.rateOf('JPY', Store.state.rateHistory),
+      };
+    },
+    rateHistory() {
+      return Store.state.rateHistory;
     },
     payableAccounts() {
       return Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
@@ -350,7 +361,16 @@ const AccountsView = {
       this.editingId = null;
     },
     async setRate(code, value) {
-      await Store.setExchangeRate(code, value);
+      await Store.setExchangeRate(code, value, this.rateEffectiveDate[code]);
+      // Next edit defaults to today again rather than quietly reusing
+      // whatever date was left in the field from the last one.
+      this.rateEffectiveDate[code] = Models.localToday();
+    },
+    toggleRateHistory(code) {
+      this.openRateHistoryCode = this.openRateHistoryCode === code ? null : code;
+    },
+    fmtRate(n) {
+      return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 4 });
     },
     async toggleArchive(account) {
       await Store.setAccountArchived(account.id, !account.isArchived);
@@ -448,12 +468,25 @@ const AccountsView = {
 
       <section class="panel">
         <h3>匯率設定<span class="muted"> · 1 單位外幣 = 多少台幣</span></h3>
-        <div class="rate-row" v-for="code in ['USD', 'JPY']" :key="code">
-          <span class="rate-label">1 {{ code }} {{ currencies[code].label }} =</span>
-          <input type="number" step="any" min="0" :value="rates[code]" @change="setRate(code, $event.target.value)" />
-          <span>TWD</span>
+        <div v-for="code in ['USD', 'JPY']" :key="code" class="subsection">
+          <div class="rate-row">
+            <span class="rate-label">1 {{ code }} {{ currencies[code].label }} =</span>
+            <input type="number" step="any" min="0" :value="rates[code]" @change="setRate(code, $event.target.value)" />
+            <span>TWD</span>
+            <span class="field-hint">生效日 <input type="date" v-model="rateEffectiveDate[code]" /></span>
+          </div>
+          <div v-if="rateHistory[code] && rateHistory[code].length > 1" class="bar-row clickable" @click="toggleRateHistory(code)">
+            <span class="bar-name muted">過去的匯率({{ rateHistory[code].length }} 筆)</span>
+            <span class="expand-arrow" :class="{ open: openRateHistoryCode === code }">›</span>
+          </div>
+          <div v-if="openRateHistoryCode === code" class="category-detail">
+            <div v-for="e in rateHistory[code].slice().reverse()" :key="e.date" class="category-detail-row">
+              <span class="category-detail-note">{{ e.date }}</span>
+              <span class="category-detail-amount">1 {{ code }} = {{ fmtRate(e.rate) }}</span>
+            </div>
+          </div>
         </div>
-        <p class="muted" style="margin: 8px 0 0;">總覽、淨值、統計都用這個匯率把外幣帳戶換成台幣;改匯率會連同過去的紀錄一起重算(不記歷史匯率)</p>
+        <p class="muted" style="margin: 8px 0 0;">總覽、淨值、統計都用生效日當天(或最近一次更早的設定)換算成台幣;改匯率只影響生效日之後的紀錄,不會動到更早的</p>
       </section>
 
       <div class="panel-grid">

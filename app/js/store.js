@@ -16,8 +16,10 @@ const state = reactive({
   investments: [],
   recurringTransactions: [],
   pledges: [],
-  // TWD per 1 unit of each foreign currency, set by the operator.
-  rates: { USD: 32, JPY: 0.21 },
+  // TWD per 1 unit of each foreign currency, as a dated history — see
+  // Models.rateOf. This default only matters before loadAll's migration
+  // (or a fresh install) ever runs.
+  rateHistory: { USD: [{ date: '2000-01-01', rate: 32 }], JPY: [{ date: '2000-01-01', rate: 0.21 }] },
 });
 
 async function loadAll() {
@@ -39,8 +41,21 @@ async function loadAll() {
   state.investments = investments;
   state.recurringTransactions = recurringTransactions;
   state.pledges = pledges;
-  const savedRates = (await Db.getAll('settings')).find((r) => r.id === 'rates');
-  if (savedRates) state.rates = { ...state.rates, ...savedRates.values };
+  // rateHistory (current shape) wins if present; otherwise fall back to the
+  // pre-history single-rate settings row and normalize it into one dated
+  // entry per currency, then persist that so this migration runs once.
+  const settingsRows = await Db.getAll('settings');
+  const savedHistory = settingsRows.find((r) => r.id === 'rateHistory');
+  const savedRates = settingsRows.find((r) => r.id === 'rates');
+  if (savedHistory) {
+    state.rateHistory = Models.normalizeRateHistory(savedHistory.values);
+  } else if (savedRates) {
+    // Db.put's structured clone chokes on state.rateHistory once it's
+    // assigned (a Vue reactive proxy) — write the plain object first.
+    const normalized = Models.normalizeRateHistory(savedRates.values);
+    await Db.put('settings', { id: 'rateHistory', values: normalized });
+    state.rateHistory = normalized;
+  }
   await migrateLabelSortOrder();
   await migrateBrokerageCurrency();
   await migrateLoanTypes();
@@ -580,7 +595,7 @@ async function deleteInvestment(id) {
 }
 
 function dailyInvestmentTotals(yearMonth) {
-  return Models.dailyInvestmentTotals(state.investments, yearMonth, state.rates);
+  return Models.dailyInvestmentTotals(state.investments, yearMonth, state.rateHistory);
 }
 
 // --- Recurring transactions (monthly rent/subscriptions/salary/...) ---
@@ -678,24 +693,37 @@ function activeCategories(kind) {
 
 // --- Currencies ---
 
-async function setExchangeRate(code, rate) {
+// Adds (or, for the same effectiveDate, replaces) one dated rate entry —
+// never overwrites the currency's whole history, so every date before
+// effectiveDate keeps reading whatever rate was actually in effect then.
+async function setExchangeRate(code, rate, effectiveDate) {
   const value = Number(rate);
   if (!(value > 0) || !Models.CURRENCIES[code] || code === 'TWD') return;
-  state.rates = { ...state.rates, [code]: value };
-  await Db.put('settings', { id: 'rates', values: { ...state.rates } });
+  const date = effectiveDate || Models.localToday();
+  // A plain deep clone first — once assigned, state.rateHistory's per-currency
+  // arrays (and the {date, rate} objects inside them) are Vue reactive
+  // proxies, and Db.put's structured clone (IndexedDB) can't handle those.
+  const next = JSON.parse(JSON.stringify(state.rateHistory));
+  const entries = next[code] || (next[code] = []);
+  const idx = entries.findIndex((e) => e.date === date);
+  if (idx !== -1) entries[idx] = { date, rate: value };
+  else entries.push({ date, rate: value });
+  entries.sort((a, b) => (a.date < b.date ? -1 : 1));
+  await Db.put('settings', { id: 'rateHistory', values: next });
+  state.rateHistory = next;
 }
 
 // The state's transactions with every amount in TWD (see
 // Models.toBaseTransactions) — what any total spanning accounts must read.
 function baseTransactionList() {
-  return Models.toBaseTransactions(state.transactions, state.accounts, state.rates);
+  return Models.toBaseTransactions(state.transactions, state.accounts, state.rateHistory);
 }
 
 // One transaction's amount in TWD, for summing rows that stay in their own
 // currency for display.
 function baseAmountOf(t) {
   const account = state.accounts.find((a) => a.id === t.accountId);
-  return t.amount * Models.rateOf(account && account.currency, state.rates);
+  return t.amount * Models.rateOf(account && account.currency, state.rateHistory, t.date);
 }
 
 function currencyOfAccount(accountId) {
@@ -728,7 +756,7 @@ function monthlyTrend(endYearMonth, monthCount) {
 }
 
 function netWorthTrend(endYearMonth, monthCount) {
-  return Models.netWorthTrend(state.accounts, state.transactions, state.investments, endYearMonth, monthCount, state.rates);
+  return Models.netWorthTrend(state.accounts, state.transactions, state.investments, endYearMonth, monthCount, state.rateHistory);
 }
 
 function monthlyFixedExpense(year) {
@@ -740,7 +768,7 @@ function dailyTotals(yearMonth) {
 }
 
 function exportBackupData() {
-  return Models.buildBackup({ ...state, rates: { ...state.rates } });
+  return Models.buildBackup({ ...state, rateHistory: { ...state.rateHistory } });
 }
 
 // The destructive counterpart to exportBackupData: wipes every table and
@@ -752,6 +780,7 @@ function exportBackupData() {
 // backfills the same way loading one from disk always has.
 async function restoreFromBackup(backup) {
   const data = backup.data;
+  const rateHistory = Models.normalizeRateHistory(data.exchangeRates);
   const tableStores = ['accounts', 'categories', 'labels', 'transactions', 'transactionLabels', 'investments', 'recurringTransactions', 'pledges'];
   for (const storeName of tableStores) await Db.clear(storeName);
   await Db.clear('settings');
@@ -759,7 +788,7 @@ async function restoreFromBackup(backup) {
     const rows = Array.isArray(data[storeName]) ? data[storeName] : [];
     if (rows.length) await Db.putAll(storeName, rows);
   }
-  if (data.exchangeRates) await Db.put('settings', { id: 'rates', values: data.exchangeRates });
+  await Db.put('settings', { id: 'rateHistory', values: rateHistory });
   await loadAll();
 }
 

@@ -135,7 +135,7 @@ const InvestmentOverviewView = {
     },
     totalRealizedPL() {
       // In TWD, since it spans both markets (US holdings are in USD).
-      return this.allHoldings.reduce((s, h) => s + h.realizedPL * Models.rateOf(Models.marketCurrency(h.market), Store.state.rates), 0);
+      return this.allHoldings.reduce((s, h) => s + h.realizedPL * Models.rateOf(Models.marketCurrency(h.market), Store.state.rateHistory), 0);
     },
     // The four tabs: TW's 上市/上櫃/ETF (Models.twInvestmentCategory, from
     // the ticker directory's listing-venue data plus the ETF code heuristic)
@@ -170,7 +170,7 @@ const InvestmentOverviewView = {
           const rows = opt.value === 'US'
             ? currentOnly.filter((h) => h.market === 'US')
             : currentOnly.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === opt.value);
-          const amount = rows.reduce((s, h) => s + h.costBasis * Models.rateOf(Models.marketCurrency(h.market), Store.state.rates), 0);
+          const amount = rows.reduce((s, h) => s + h.costBasis * Models.rateOf(Models.marketCurrency(h.market), Store.state.rateHistory), 0);
           return { value: opt.value, category: { name: opt.label, color: ALLOCATION_COLORS[opt.value] }, amount };
         })
         .filter((row) => row.amount > 0);
@@ -268,10 +268,17 @@ const InvestmentOverviewView = {
     fmtCur(n, code) {
       return Models.formatMoney(n, code);
     },
-    // A native-currency amount converted to TWD at the current rate — for
-    // the ≈ NT$ line next to a 美股 total.
+    // A native-currency amount converted to TWD at today's rate — for whole-
+    // history aggregates (已實現, a holding's realizedPL) where there's no
+    // one date to convert at anyway.
     toBase(n) {
-      return n * Models.rateOf(this.currentCurrency, Store.state.rates);
+      return n * Models.rateOf(this.currentCurrency, Store.state.rateHistory);
+    },
+    // Same, but at the rate in effect on a specific date — 交易明細's day
+    // totals are all one real date, so unlike toBase above they can (and
+    // should) convert at that day's rate instead of today's.
+    toBaseAsOf(n, date) {
+      return n * Models.rateOf(this.currentCurrency, Store.state.rateHistory, date);
     },
     // 持股比例's legend: a Taiwan holding reads as its company name (a bare
     // four-digit code says nothing at a glance), falling back to the code when
@@ -464,8 +471,8 @@ const InvestmentOverviewView = {
             <div class="subsection-header clickable" @click="toggleDateExpand(g.date)">
               <span>{{ g.date }}</span>
               <span>
-                <span v-if="g.buyTotal" class="negative">-{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.buyTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBase(g.buyTotal)) }})</span></span>
-                <span v-if="g.sellTotal" class="positive"> +{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.sellTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBase(g.sellTotal)) }})</span></span>
+                <span v-if="g.buyTotal" class="negative">-{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.buyTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBaseAsOf(g.buyTotal, g.date)) }})</span></span>
+                <span v-if="g.sellTotal" class="positive"> +{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.sellTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBaseAsOf(g.sellTotal, g.date)) }})</span></span>
                 <span class="expand-arrow" :class="{ open: expandedDate === g.date }">›</span>
               </span>
             </div>

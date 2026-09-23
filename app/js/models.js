@@ -76,8 +76,10 @@ function accountIcon(account) {
 }
 
 // The currencies an account can hold. TWD is the base every total is shown
-// in; the others are converted with rates the operator sets (Store.state.rates,
-// TWD per 1 unit) — a single current rate per currency, applied to all history.
+// in; the others are converted through a rate history the operator sets
+// (Store.state.rateHistory, TWD per 1 unit, one or more dated entries per
+// currency) — a foreign amount converts at whatever rate was in effect on
+// its own date, not today's, so editing the rate doesn't reshape the past.
 const CURRENCIES = {
   TWD: { symbol: 'NT$', label: '台幣', decimals: 0 },
   USD: { symbol: 'US$', label: '美金', decimals: 2 },
@@ -94,22 +96,57 @@ function formatMoney(n, code) {
   return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: digits });
 }
 
-// TWD per 1 unit of `code`; anything unknown or unset counts as 1 so a
-// missing rate never zeroes out an account's contribution.
-function rateOf(code, rates) {
+// TWD per 1 unit of `code`, as of `asOfDate` (defaults to today): the latest
+// history entry on or before that date, or the earliest entry when the date
+// predates all of them (the best available answer, not a missing one).
+// Anything unknown or unset counts as 1 so a missing rate never zeroes out
+// an account's contribution. `history` is Store.state.rateHistory's shape:
+// { USD: [{ date, rate }, ...], ... }, each currency's entries sorted
+// ascending by date (Store.setExchangeRate keeps them that way).
+function rateOf(code, history, asOfDate) {
   if (!code || code === 'TWD') return 1;
-  const r = Number(rates && rates[code]);
-  return r > 0 ? r : 1;
+  const entries = history && history[code];
+  if (!entries || entries.length === 0) return 1;
+  const date = asOfDate || localToday();
+  let best = entries[0];
+  for (const entry of entries) {
+    if (entry.date <= date) best = entry;
+    else break;
+  }
+  return best.rate > 0 ? best.rate : 1;
+}
+
+// Accepts either the old single-number-per-currency shape a backup or the
+// settings store might still hold (from before rate history existed) or
+// today's { code: [{date, rate}] } shape, and always returns the latter —
+// an old flat value becomes one entry dated RATE_HISTORY_EPOCH, so it acts
+// as the floor for every date before the operator ever records a newer one
+// (exactly the single-rate-for-all-time behavior it used to have).
+const RATE_HISTORY_EPOCH = '2000-01-01';
+function normalizeRateHistory(raw) {
+  const result = {};
+  for (const code of Object.keys(CURRENCIES)) {
+    if (code === 'TWD') continue;
+    const value = raw && raw[code];
+    if (Array.isArray(value)) {
+      result[code] = value.filter((e) => e && e.date && e.rate > 0).slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+    } else if (typeof value === 'number' && value > 0) {
+      result[code] = [{ date: RATE_HISTORY_EPOCH, rate: value }];
+    } else {
+      result[code] = [];
+    }
+  }
+  return result;
 }
 
 // The same transactions with `amount` (and a transfer's `toAmount`) turned
 // into TWD by the rate of the account each one is booked on, so every
 // income/expense/trend calculation can run on them unchanged. Transactions
 // on TWD accounts (and ones whose account is gone) are passed through as-is.
-function toBaseTransactions(transactions, accounts, rates) {
+function toBaseTransactions(transactions, accounts, rateHistory) {
   const currencyOf = new Map(accounts.map((a) => [a.id, a.currency || 'TWD']));
   return transactions.map((t) => {
-    const r = rateOf(currencyOf.get(t.accountId), rates);
+    const r = rateOf(currencyOf.get(t.accountId), rateHistory, t.date);
     return r === 1 ? t : { ...t, amount: t.amount * r, toAmount: null };
   });
 }
@@ -447,7 +484,7 @@ function dailyInvestmentTotals(investments, yearMonth, rates = {}) {
     const day = Number(inv.date.slice(8, 10));
     const row = byDay.get(day) || { buy: 0, sell: 0 };
     // In TWD: a day can hold trades from both markets.
-    const net = investmentAmounts(inv).net * rateOf(marketCurrency(inv.market), rates);
+    const net = investmentAmounts(inv).net * rateOf(marketCurrency(inv.market), rates, inv.date);
     if (inv.action === 'buy') row.buy += net;
     else row.sell += net;
     byDay.set(day, row);
@@ -896,7 +933,7 @@ function netWorthAsOf(accounts, transactions, investments, cutoffDate, rates = {
     const balance = Models.accountBalance(a, scopedTx, scopedInv);
     // Same "debt reads negative" convention dashboard.js's displayBalance uses.
     const signed = isLiabilityKind(a.kind) ? -balance : balance;
-    return sum + (signed + Models.accountHoldingsCost(a, scopedInv)) * Models.rateOf(a.currency, rates);
+    return sum + (signed + Models.accountHoldingsCost(a, scopedInv)) * Models.rateOf(a.currency, rates, cutoffDate);
   }, 0);
 }
 
@@ -1196,7 +1233,7 @@ function buildBackup(tables) {
       investments: tables.investments,
       recurringTransactions: tables.recurringTransactions,
       pledges: tables.pledges,
-      exchangeRates: tables.rates,
+      exchangeRates: tables.rateHistory,
     },
   };
 }
@@ -1233,6 +1270,7 @@ window.Models = {
   currencySymbol,
   formatMoney,
   rateOf,
+  normalizeRateHistory,
   marketCurrency,
   toBaseTransactions,
   accountBalance,

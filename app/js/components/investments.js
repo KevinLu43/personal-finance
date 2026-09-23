@@ -33,7 +33,7 @@ const InvestmentRowItem = {
     },
     baseAmountText() {
       if (this.currency === 'TWD') return '';
-      const base = this.net * Models.rateOf(this.currency, Store.state.rates);
+      const base = this.net * Models.rateOf(this.currency, Store.state.rateHistory, this.investment.date);
       return '≈ NT$ ' + Math.round(base).toLocaleString('zh-TW');
     },
   },
@@ -439,10 +439,10 @@ const InvestmentsView = {
       return this.usInvestments.filter((i) => i.action === 'sell').reduce((s, i) => s + Models.investmentAmounts(i).net, 0);
     },
     usBuyBase() {
-      return this.usBuyTotal * Models.rateOf('USD', Store.state.rates);
+      return this.usBuyTotal * Models.rateOf('USD', Store.state.rateHistory, this.selectedDay);
     },
     usSellBase() {
-      return this.usSellTotal * Models.rateOf('USD', Store.state.rates);
+      return this.usSellTotal * Models.rateOf('USD', Store.state.rateHistory, this.selectedDay);
     },
   },
   methods: {
