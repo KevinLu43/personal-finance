@@ -109,6 +109,7 @@ const InvestmentOverviewView = {
       month: now.getMonth() + 1,
       query: '',
       actionFilters: [], // subset of buy/sell; empty means "all"
+      showAllCategories: false, // 交易明細 only: ignore the 上市/上櫃/ETF/美股 tab and show every category's trades together
       editingId: null,
       formDefaultDate: null,
       expandedDate: null, // which 交易明細 date group is expanded, one at a time
@@ -158,22 +159,30 @@ const InvestmentOverviewView = {
       return this.selectedCategory === 'US' ? 'US' : 'TW';
     },
     // 資產配置: what the whole portfolio (every tab, current holdings only)
-    // is worth at cost, split the same four ways the tabs are — one figure
-    // to look at before drilling into any single tab. Cost, not live price
-    // (this app has no quotes), in TWD so a 美股 holding can sit in the same
-    // total as a TW one; ALLOCATION_COLORS keys by categoryOptions' value so
-    // this and the donut/legend below always agree on which color is which.
+    // is worth at cost, split the same four ways the tabs are, each row also
+    // carrying that category's own realized P&L — one place to compare all
+    // four before drilling into any single tab. Cost, not live price (this
+    // app has no quotes), in TWD so a 美股 holding can sit in the same total
+    // as a TW one; ALLOCATION_COLORS keys by categoryOptions' value so this
+    // and the donut/legend below always agree on which color is which.
+    // realizedPL is summed from every holding ever in that category (not
+    // just currentOnly) — a fully exited position's gain/loss still counts,
+    // the same way totalRealizedPL up top never forgets a closed position.
     allocationBreakdown() {
       const currentOnly = this.allHoldings.filter((h) => h.quantity > 0);
+      const inCategory = (rows, value) => (value === 'US'
+        ? rows.filter((h) => h.market === 'US')
+        : rows.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === value));
       return this.categoryOptions
         .map((opt) => {
-          const rows = opt.value === 'US'
-            ? currentOnly.filter((h) => h.market === 'US')
-            : currentOnly.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === opt.value);
-          const amount = rows.reduce((s, h) => s + h.costBasis * Models.rateOf(Models.marketCurrency(h.market), Store.state.rateHistory), 0);
-          return { value: opt.value, category: { name: opt.label, color: ALLOCATION_COLORS[opt.value] }, amount };
+          const costRows = inCategory(currentOnly, opt.value);
+          const plRows = inCategory(this.allHoldings, opt.value);
+          const rateOf = (h) => Models.rateOf(Models.marketCurrency(h.market), Store.state.rateHistory);
+          const amount = costRows.reduce((s, h) => s + h.costBasis * rateOf(h), 0);
+          const realizedPL = plRows.reduce((s, h) => s + h.realizedPL * rateOf(h), 0);
+          return { value: opt.value, category: { name: opt.label, color: ALLOCATION_COLORS[opt.value] }, amount, realizedPL };
         })
-        .filter((row) => row.amount > 0);
+        .filter((row) => row.amount > 0 || row.realizedPL !== 0);
     },
     allocationTotal() {
       return this.allocationBreakdown.reduce((s, row) => s + row.amount, 0);
@@ -221,7 +230,7 @@ const InvestmentOverviewView = {
       const q = this.query.trim().toLowerCase();
       return Store.state.investments
         .filter((i) => !i.isDeleted && i.date.startsWith(this.yearMonth))
-        .filter((i) => (this.selectedCategory === 'US' ? i.market === 'US' : i.market === 'TW' && Models.twInvestmentCategory(i.ticker) === this.selectedCategory))
+        .filter((i) => this.showAllCategories || (this.selectedCategory === 'US' ? i.market === 'US' : i.market === 'TW' && Models.twInvestmentCategory(i.ticker) === this.selectedCategory))
         .filter((i) => this.actionFilters.length === 0 || this.actionFilters.includes(i.action))
         .filter((i) => {
           if (!q) return true;
@@ -246,8 +255,14 @@ const InvestmentOverviewView = {
         }
         group.items.push(i);
         const { net } = Models.investmentAmounts(i);
-        if (i.action === 'buy') group.buyTotal += net;
-        else group.sellTotal += net;
+        // Showing every category together can mix TWD and USD trades on the
+        // same day — there's no single native currency left to sum in, so
+        // the day's total converts to TWD at each trade's own date instead.
+        const amount = this.showAllCategories
+          ? net * Models.rateOf(Models.marketCurrency(i.market), Store.state.rateHistory, i.date)
+          : net;
+        if (i.action === 'buy') group.buyTotal += amount;
+        else group.sellTotal += amount;
       }
       return groups;
     },
@@ -279,6 +294,15 @@ const InvestmentOverviewView = {
     // should) convert at that day's rate instead of today's.
     toBaseAsOf(n, date) {
       return n * Models.rateOf(this.currentCurrency, Store.state.rateHistory, date);
+    },
+    // A 交易明細 day total's own text: the active tab's native currency
+    // normally, or — once showAllCategories mixes markets — the TWD figure
+    // groupedByDate already converted it to (a symbol here would be wrong,
+    // since it's no longer any one currency).
+    fmtGroupAmount(amount) {
+      if (this.showAllCategories) return this.fmt(amount);
+      const symbol = this.currentCurrency !== 'TWD' ? this.currencySymbol(this.currentCurrency) : '';
+      return symbol + this.fmtCur(amount, this.currentCurrency);
     },
     // 持股比例's legend: a Taiwan holding reads as its company name (a bare
     // four-digit code says nothing at a glance), falling back to the code when
@@ -380,14 +404,27 @@ const InvestmentOverviewView = {
             transform="rotate(-90 50 50)"
           />
         </svg>
+        <div class="month-table-row month-table-header">
+          <span class="month-table-cell month">分類</span>
+          <span class="month-table-cell">佔比</span>
+          <span class="month-table-cell">成本</span>
+          <span class="month-table-cell">已實現</span>
+        </div>
         <div
-          v-for="row in allocationBreakdown" :key="row.value" class="bar-row clickable"
+          v-for="row in allocationBreakdown" :key="row.value" class="month-table-row clickable"
           :class="{ active: selectedCategory === row.value }"
           @click="selectedCategory = row.value"
         >
-          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmtAllocationPercent(row.amount) }} · {{ fmt(row.amount) }}</span>
+          <span class="month-table-cell month"><span class="legend-swatch" :style="{ background: row.category.color }"></span>{{ row.category.name }}</span>
+          <span class="month-table-cell">{{ fmtAllocationPercent(row.amount) }}</span>
+          <span class="month-table-cell">{{ fmt(row.amount) }}</span>
+          <span class="month-table-cell" :class="row.realizedPL >= 0 ? 'positive' : 'negative'">{{ row.realizedPL >= 0 ? '+' : '' }}{{ fmt(row.realizedPL) }}</span>
+        </div>
+        <div class="month-table-row">
+          <span class="month-table-cell month" style="font-weight: 700;">合計</span>
+          <span class="month-table-cell"></span>
+          <span class="month-table-cell" style="font-weight: 700;">{{ fmt(allocationTotal) }}</span>
+          <span class="month-table-cell" :class="totalRealizedPL >= 0 ? 'positive' : 'negative'">{{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}</span>
         </div>
       </section>
 
@@ -451,7 +488,7 @@ const InvestmentOverviewView = {
 
         <section class="panel">
           <div class="view-header">
-            <h3>交易明細</h3>
+            <h3>交易明細<span v-if="showAllCategories" class="muted"> · 全部分類</span></h3>
             <button class="primary" @click="openNew">+ 新增</button>
           </div>
 
@@ -470,6 +507,7 @@ const InvestmentOverviewView = {
                 class="chip" :class="{ selected: actionFilters.includes(opt.action) }"
                 @click="toggleAction(opt.action)"
               >{{ opt.label }}</span>
+              <span class="chip" :class="{ selected: showAllCategories }" @click="showAllCategories = !showAllCategories">全部分類</span>
             </div>
           </div>
 
@@ -478,8 +516,8 @@ const InvestmentOverviewView = {
             <div class="subsection-header clickable" @click="toggleDateExpand(g.date)">
               <span>{{ g.date }}</span>
               <span>
-                <span v-if="g.buyTotal" class="negative">-{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.buyTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBaseAsOf(g.buyTotal, g.date)) }})</span></span>
-                <span v-if="g.sellTotal" class="positive"> +{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(g.sellTotal, currentCurrency) }}<span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBaseAsOf(g.sellTotal, g.date)) }})</span></span>
+                <span v-if="g.buyTotal" class="negative">-{{ fmtGroupAmount(g.buyTotal) }}<span v-if="!showAllCategories && currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBaseAsOf(g.buyTotal, g.date)) }})</span></span>
+                <span v-if="g.sellTotal" class="positive"> +{{ fmtGroupAmount(g.sellTotal) }}<span v-if="!showAllCategories && currentCurrency !== 'TWD'" class="muted"> (≈ {{ fmt(toBaseAsOf(g.sellTotal, g.date)) }})</span></span>
                 <span class="expand-arrow" :class="{ open: expandedDate === g.date }">›</span>
               </span>
             </div>

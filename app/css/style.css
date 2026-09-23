@@ -357,9 +357,11 @@ body {
   flex: 1;
   text-align: right;
 }
-.month-table-cell.month { text-align: left; flex: 0.8; }
+.month-table-cell.month { text-align: left; flex: 0.8; display: flex; align-items: center; }
 .month-table-cell.positive { color: var(--income); }
 .month-table-cell.negative { color: var(--expense); }
+.month-table-row.clickable { cursor: pointer; border-radius: 6px; }
+.month-table-row.active .month-table-cell.month { font-weight: 700; color: var(--ink); }
 
 .search-field {
   display: block;
@@ -843,7 +845,8 @@ button.primary {
 
   .bar-row.clickable:hover,
   .list-row.clickable:hover,
-  .subsection-header.clickable:hover { background: var(--line); }
+  .subsection-header.clickable:hover,
+  .month-table-row.clickable:hover { background: var(--line); }
 
   .list-row-actions button:hover,
   .row-delete:hover { background: var(--line); }
