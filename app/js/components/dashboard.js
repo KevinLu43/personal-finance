@@ -96,6 +96,9 @@ const DashboardView = {
       editingId: null,
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
+      incomeOtherOpen: false, // 收入分類's folded 其他 row
+      creditDebtOtherOpen: false, // 信用卡欠款's folded 其他 row
+      creditSpendOtherOpen: false, // 信用卡刷卡's folded 其他 row
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
       expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
       trendPick: null, // index of the month picked on the trend chart, for the readout
@@ -230,16 +233,7 @@ const DashboardView = {
     // fold into one "其他" row that still expands (see the template) onto
     // the categories inside it, so nothing is actually hidden, just collapsed.
     categoryBreakdownRows() {
-      const rows = this.activeSummary.categoryBreakdown; // already sorted by amount desc
-      if (rows.length <= DASHBOARD_CATEGORY_MAX_SERIES) return rows;
-      const top = rows.slice(0, DASHBOARD_CATEGORY_MAX_SERIES);
-      const rest = rows.slice(DASHBOARD_CATEGORY_MAX_SERIES);
-      const otherAmount = rest.reduce((s, row) => s + row.amount, 0);
-      return [...top, {
-        category: { id: '__other__', name: '其他', icon: '➕', color: '#8a8a8a' },
-        amount: otherAmount,
-        otherRows: rest,
-      }];
+      return this.capBreakdown(this.activeSummary.categoryBreakdown, 'category');
     },
     donutSegments() {
       return Models.buildDonutSegments(this.categoryBreakdownRows);
@@ -251,8 +245,11 @@ const DashboardView = {
     categoryBreakdownTotal() {
       return this.activeSummary.categoryBreakdown.reduce((s, row) => s + row.amount, 0);
     },
+    incomeBreakdownRows() {
+      return this.capBreakdown(this.activeSummary.incomeCategoryBreakdown, 'category');
+    },
     incomeDonutSegments() {
-      return Models.buildDonutSegments(this.activeSummary.incomeCategoryBreakdown);
+      return Models.buildDonutSegments(this.incomeBreakdownRows);
     },
     incomeBreakdownTotal() {
       return this.activeSummary.incomeCategoryBreakdown.reduce((s, row) => s + row.amount, 0);
@@ -304,6 +301,9 @@ const DashboardView = {
     },
     labelBreakdown() {
       return Models.labelBreakdown(this.periodExpenseTransactions, Store.state.transactionLabels, Store.state.labels);
+    },
+    labelBreakdownRows() {
+      return this.capBreakdown(this.labelBreakdown, 'label');
     },
     // The percentage base for 標籤統計's rows — same "sum of the rows
     // actually shown" rule categoryBreakdownTotal uses, not a share of
@@ -489,8 +489,11 @@ const DashboardView = {
     creditCardDebtTotal() {
       return this.creditCardDebtBreakdown.reduce((s, row) => s + row.amount, 0);
     },
+    creditCardDebtRows() {
+      return this.capBreakdown(this.creditCardDebtBreakdown, 'category');
+    },
     creditCardDebtSegments() {
-      return Models.buildDonutSegments(this.creditCardDebtBreakdown);
+      return Models.buildDonutSegments(this.creditCardDebtRows);
     },
     // Unlike the debt snapshot above, this one *is* scoped to the selected
     // month/year — "how much did I actually charge to each card in this
@@ -513,11 +516,39 @@ const DashboardView = {
     creditCardSpendTotal() {
       return this.creditCardSpendBreakdown.reduce((s, row) => s + row.amount, 0);
     },
+    creditCardSpendRows() {
+      return this.capBreakdown(this.creditCardSpendBreakdown, 'category');
+    },
     creditCardSpendSegments() {
-      return Models.buildDonutSegments(this.creditCardSpendBreakdown);
+      return Models.buildDonutSegments(this.creditCardSpendRows);
     },
   },
   methods: {
+    // Shared by every donut/legend list on this page that can grow long —
+    // caps at DASHBOARD_CATEGORY_MAX_SERIES rows (already sorted by amount
+    // desc) and folds the rest into one foldable "其他" row, the same
+    // pattern categoryBreakdownRows introduced for 支出分類. `keyField` is
+    // 'category' or 'label' — whichever key a row's name/icon/color live
+    // under; the synthetic 其他 row always uses that same key so its shape
+    // matches every other row in the list.
+    capBreakdown(rows, keyField = 'category') {
+      if (rows.length <= DASHBOARD_CATEGORY_MAX_SERIES) return rows;
+      const top = rows.slice(0, DASHBOARD_CATEGORY_MAX_SERIES);
+      const rest = rows.slice(DASHBOARD_CATEGORY_MAX_SERIES);
+      const otherAmount = rest.reduce((s, row) => s + row.amount, 0);
+      const other = { amount: otherAmount, otherRows: rest };
+      other[keyField] = { id: '__other__', name: '其他', icon: '➕', color: '#8a8a8a' };
+      return [...top, other];
+    },
+    toggleIncomeOther() {
+      this.incomeOtherOpen = !this.incomeOtherOpen;
+    },
+    toggleCreditDebtOther() {
+      this.creditDebtOtherOpen = !this.creditDebtOtherOpen;
+    },
+    toggleCreditSpendOther() {
+      this.creditSpendOtherOpen = !this.creditSpendOtherOpen;
+    },
     // Net worth's marker: a diamond, so it isn't mistaken for the net line's circles.
     // "較上月 ▲12%" against the previous period; `goodWhenUp` says whether a
     // rise is the good direction (income, net) or the bad one (expense).
@@ -817,7 +848,7 @@ const DashboardView = {
       <section class="panel">
         <h3>{{ viewMode === 'year' ? '全年標籤統計' : '標籤統計' }}</h3>
         <div v-if="labelBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄' }}</div>
-        <div v-for="row in labelBreakdown" :key="row.label.id">
+        <div v-for="row in labelBreakdownRows" :key="row.label.id">
           <div class="bar-row clickable" @click="toggleLabelExpand(row.label.id)">
             <span class="icon-badge-sm" :style="{ background: (row.label.color || '#6d6875') + '30' }">{{ row.label.icon || '🏷️' }}</span>
             <span class="bar-name">{{ row.label.name }}</span>
@@ -825,13 +856,24 @@ const DashboardView = {
             <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtLabelPercent(row.amount) }}</span>
           </div>
           <div v-if="expandedLabelId === row.label.id" class="category-detail">
-            <div v-for="d in labelNoteBreakdown(row.label.id)" :key="d.note" class="category-detail-row">
-              <span class="category-detail-note">{{ d.note }}</span>
-              <span class="category-detail-bar-track">
-                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%' }"></span>
-              </span>
-              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-            </div>
+            <template v-if="row.otherRows">
+              <div v-for="d in row.otherRows" :key="d.label.id" class="category-detail-row">
+                <span class="category-detail-note">{{ d.label.icon || '🏷️' }} {{ d.label.name }}</span>
+                <span class="category-detail-bar-track">
+                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.label.color || '#6d6875' }"></span>
+                </span>
+                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+              </div>
+            </template>
+            <template v-else>
+              <div v-for="d in labelNoteBreakdown(row.label.id)" :key="d.note" class="category-detail-row">
+                <span class="category-detail-note">{{ d.note }}</span>
+                <span class="category-detail-bar-track">
+                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%' }"></span>
+                </span>
+                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </section>
@@ -874,10 +916,22 @@ const DashboardView = {
             transform="rotate(-90 50 50)"
           />
         </svg>
-        <div v-for="row in activeSummary.incomeCategoryBreakdown" :key="row.category.id" class="bar-row">
-          <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
+        <div v-for="row in incomeBreakdownRows" :key="row.category.id">
+          <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleIncomeOther()">
+            <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
+            <span class="bar-name">{{ row.category.name }}</span>
+            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: incomeOtherOpen }">›</span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
+          </div>
+          <div v-if="row.otherRows && incomeOtherOpen" class="category-detail">
+            <div v-for="d in row.otherRows" :key="d.category.id" class="category-detail-row">
+              <span class="category-detail-note">{{ d.category.icon }} {{ d.category.name }}</span>
+              <span class="category-detail-bar-track">
+                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color || '#adb5bd' }"></span>
+              </span>
+              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+            </div>
+          </div>
         </div>
       </section>
       </div>
@@ -896,10 +950,22 @@ const DashboardView = {
             transform="rotate(-90 50 50)"
           />
         </svg>
-        <div v-for="row in creditCardDebtBreakdown" :key="row.category.name" class="bar-row">
-          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
+        <div v-for="row in creditCardDebtRows" :key="row.category.name">
+          <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleCreditDebtOther()">
+            <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+            <span class="bar-name">{{ row.category.name }}</span>
+            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: creditDebtOtherOpen }">›</span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
+          </div>
+          <div v-if="row.otherRows && creditDebtOtherOpen" class="category-detail">
+            <div v-for="d in row.otherRows" :key="d.category.name" class="category-detail-row">
+              <span class="category-detail-note"><span class="legend-swatch" :style="{ background: d.category.color }"></span>{{ d.category.name }}</span>
+              <span class="category-detail-bar-track">
+                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
+              </span>
+              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -916,10 +982,22 @@ const DashboardView = {
             transform="rotate(-90 50 50)"
           />
         </svg>
-        <div v-for="row in creditCardSpendBreakdown" :key="row.category.name" class="bar-row">
-          <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-          <span class="bar-name">{{ row.category.name }}</span>
-          <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardSpendPercent(row.amount) }}</span>
+        <div v-for="row in creditCardSpendRows" :key="row.category.name">
+          <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleCreditSpendOther()">
+            <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+            <span class="bar-name">{{ row.category.name }}</span>
+            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: creditSpendOtherOpen }">›</span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardSpendPercent(row.amount) }}</span>
+          </div>
+          <div v-if="row.otherRows && creditSpendOtherOpen" class="category-detail">
+            <div v-for="d in row.otherRows" :key="d.category.name" class="category-detail-row">
+              <span class="category-detail-note"><span class="legend-swatch" :style="{ background: d.category.color }"></span>{{ d.category.name }}</span>
+              <span class="category-detail-bar-track">
+                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
+              </span>
+              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+            </div>
+          </div>
         </div>
       </section>
       </div>

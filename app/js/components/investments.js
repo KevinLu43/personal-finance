@@ -1,7 +1,13 @@
 const INVESTMENT_WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
 
 const InvestmentRowItem = {
-  props: ['investment'],
+  props: {
+    investment: { type: Object, required: true },
+    // The 投資 day panel groups trades by date already, so the date itself
+    // is implicit there; a list spanning many dates (a holding's whole
+    // trade history in 投資總覽) needs it spelled out on each row instead.
+    showDate: { type: Boolean, default: false },
+  },
   emits: ['edit', 'remove'],
   computed: {
     net() {
@@ -43,7 +49,7 @@ const InvestmentRowItem = {
         <span class="list-row-title">{{ investment.ticker }}</span>
         <span v-if="companyName" class="ticker-name">{{ companyName }}</span>
         <div class="list-row-sub">
-          {{ investment.action === 'buy' ? '買入' : '賣出' }} · {{ fmt(investment.price) }} × {{ investment.quantity }} · {{ accountName }}
+          <template v-if="showDate">{{ investment.date }} · </template>{{ investment.action === 'buy' ? '買入' : '賣出' }} · {{ fmt(investment.price) }} × {{ investment.quantity }} · {{ accountName }}
         </div>
       </div>
       <div class="list-row-amount" :class="{ negative: investment.action === 'buy', positive: investment.action === 'sell' }">

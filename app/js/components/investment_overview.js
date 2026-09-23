@@ -112,6 +112,7 @@ const InvestmentOverviewView = {
       editingId: null,
       formDefaultDate: null,
       expandedDate: null, // which 交易明細 date group is expanded, one at a time
+      expandedHoldingKey: null, // which holding row's trade history is open, one at a time ('market:ticker')
       fixOpen: false, // the 補上代號 dialog
     };
   },
@@ -306,6 +307,25 @@ const InvestmentOverviewView = {
     toggleDateExpand(date) {
       this.expandedDate = this.expandedDate === date ? null : date;
     },
+    holdingKey(h) {
+      return h.market + ':' + h.ticker;
+    },
+    toggleHoldingExpand(h) {
+      const key = this.holdingKey(h);
+      this.expandedHoldingKey = this.expandedHoldingKey === key ? null : key;
+    },
+    // A holding's whole trade history, not scoped to the selected month —
+    // the holding row itself is a whole-history total (Models.holdingsSummary),
+    // so folding its trade list down to just the current month would silently
+    // hide most of what built up that total. Newest first, same order 交易明細 uses.
+    holdingTrades(h) {
+      return Store.state.investments
+        .filter((i) => !i.isDeleted && i.market === h.market && i.ticker === h.ticker)
+        .sort((a, b) => {
+          if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+          return a.updatedAt < b.updatedAt ? 1 : -1;
+        });
+    },
     openNew() {
       const today = Models.localToday();
       this.formDefaultDate = today.startsWith(this.yearMonth) ? today : `${this.yearMonth}-01`;
@@ -393,18 +413,24 @@ const InvestmentOverviewView = {
                 <span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ NT$ {{ fmt(toBase(currentRealizedPL)) }})</span>
               </span>
             </div>
-            <div v-for="h in currentHoldings" :key="h.ticker" class="list-row">
-              <div class="list-row-main">
-                <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span></div>
-                <div class="list-row-sub">
-                  {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost)) : '已出清' }}
-                  <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
+            <div v-for="h in currentHoldings" :key="holdingKey(h)">
+              <div class="list-row clickable" @click="toggleHoldingExpand(h)">
+                <div class="list-row-main">
+                  <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span></div>
+                  <div class="list-row-sub">
+                    {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost)) : '已出清' }}
+                    <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
+                  </div>
                 </div>
+                <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">
+                  {{ h.realizedPL > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(h.realizedPL, currentCurrency) }}
+                  <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.realizedPL)) }}</div>
+                </div>
+                <span class="expand-arrow" :class="{ open: expandedHoldingKey === holdingKey(h) }">›</span>
               </div>
-              <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">
-                {{ h.realizedPL > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(h.realizedPL, currentCurrency) }}
-                <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.realizedPL)) }}</div>
-              </div>
+              <template v-if="expandedHoldingKey === holdingKey(h)">
+                <InvestmentRowItem v-for="i in holdingTrades(h)" :key="i.id" :investment="i" show-date @edit="openEdit" @remove="remove" />
+              </template>
             </div>
           </section>
         </template>
