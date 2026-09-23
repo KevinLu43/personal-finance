@@ -97,11 +97,13 @@ const DashboardView = {
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
       incomeOtherOpen: false, // 收入分類's folded 其他 row
+      fixedExpenseOtherOpen: false, // 固定支出（月）'s folded 其他 row
       creditDebtOtherOpen: false, // 信用卡欠款's folded 其他 row
       creditSpendOtherOpen: false, // 信用卡刷卡's folded 其他 row
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
       expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
       trendPick: null, // index of the month picked on the trend chart, for the readout
+      kpiCompareMode: 'prev', // month view only: 'prev' (較上月) | 'yoy' (較去年同月)
     };
   },
   watch: {
@@ -189,19 +191,24 @@ const DashboardView = {
       const months = this.netWorthTrendMonths;
       return months.length < 2 ? 0 : months[months.length - 1].netWorth - months[0].netWorth;
     },
-    // The period right before the selected one (last month / last year), for
-    // the "較上月" deltas on the summary cards.
+    // The period the summary cards compare against: last month (or, toggled
+    // in month view, the same month last year) — year view always compares
+    // to last year, the only "same period a year back" a year has.
     previousSummary() {
       if (this.viewMode === 'year') return Store.yearlySummary(this.year - 1);
+      if (this.kpiCompareMode === 'yoy') return Store.monthlySummary(`${this.year - 1}-${String(this.month).padStart(2, '0')}`);
       const prev = this.month === 1 ? `${this.year - 1}-12` : `${this.year}-${String(this.month - 1).padStart(2, '0')}`;
       return Store.monthlySummary(prev);
     },
-    // Net worth at the end of the selected period and how far it moved over it
-    // (month: vs the previous month's end; year: vs the previous December's).
+    // Net worth at the end of the selected period and how far it moved since
+    // whichever period previousSummary is comparing against (month: the
+    // previous month's end, or toggled, the same month a year back; year:
+    // the previous December's).
     netWorthKpi() {
-      const months = this.viewMode === 'year'
-        ? Store.netWorthTrend(`${this.year}-12`, 13)
-        : Store.netWorthTrend(this.yearMonth, 2);
+      let months;
+      if (this.viewMode === 'year') months = Store.netWorthTrend(`${this.year}-12`, 13);
+      else if (this.kpiCompareMode === 'yoy') months = Store.netWorthTrend(this.yearMonth, 13);
+      else months = Store.netWorthTrend(this.yearMonth, 2);
       const last = months[months.length - 1];
       const first = months[0];
       return { value: last.netWorth, change: months.length < 2 ? 0 : last.netWorth - first.netWorth };
@@ -215,7 +222,7 @@ const DashboardView = {
         { key: 'income', label: year ? '全年收入' : '收入', value: s.income, tone: 'income', delta: this.kpiDelta(s.income, p.income, true) },
         { key: 'expense', label: year ? '全年支出' : '支出', value: s.expense, tone: 'expense', delta: this.kpiDelta(s.expense, p.expense, false) },
         { key: 'net', label: year ? '全年結餘' : '結餘', value: s.net, tone: s.net >= 0 ? 'income' : 'expense', delta: this.kpiDelta(s.net, p.net, true) },
-        { key: 'worth', label: year ? '年底淨值' : '月底淨值', value: w.value, tone: w.value >= 0 ? 'income' : 'expense', changeText: (year ? '今年 ' : '本月 ') + (w.change >= 0 ? '+' : '') + this.fmt(w.change), changeGood: w.change >= 0 },
+        { key: 'worth', label: year ? '年底淨值' : '月底淨值', value: w.value, tone: w.value >= 0 ? 'income' : 'expense', changeText: (year ? '今年 ' : (this.kpiCompareMode === 'yoy' ? '較去年同月 ' : '本月 ')) + (w.change >= 0 ? '+' : '') + this.fmt(w.change), changeGood: w.change >= 0 },
       ];
     },
     // What the trend chart's picked month reads out: that month's income,
@@ -274,8 +281,14 @@ const DashboardView = {
     fixedExpenseTotal() {
       return this.fixedExpenseRows.reduce((sum, row) => sum + row.amount, 0);
     },
+    // Capped the same way as every other donut on this page — a household
+    // with several subscriptions and a couple of loan installments can
+    // easily pass 6 lines otherwise.
+    fixedExpenseCappedRows() {
+      return this.capBreakdown(this.fixedExpenseRows, 'category');
+    },
     fixedExpenseDonutSegments() {
-      return Models.buildDonutSegments(this.fixedExpenseRows);
+      return Models.buildDonutSegments(this.fixedExpenseCappedRows);
     },
     // Year mode's 固定支出 chart: rule spending and loan payments per month
     // of the selected year, Jan–Dec, stacked.
@@ -549,6 +562,9 @@ const DashboardView = {
     toggleCreditSpendOther() {
       this.creditSpendOtherOpen = !this.creditSpendOtherOpen;
     },
+    toggleFixedExpenseOther() {
+      this.fixedExpenseOtherOpen = !this.fixedExpenseOtherOpen;
+    },
     // Net worth's marker: a diamond, so it isn't mistaken for the net line's circles.
     // "較上月 ▲12%" against the previous period; `goodWhenUp` says whether a
     // rise is the good direction (income, net) or the bad one (expense).
@@ -559,7 +575,7 @@ const DashboardView = {
       return Models.formatMoney(n, code);
     },
     kpiDelta(cur, prev, goodWhenUp) {
-      const label = this.viewMode === 'year' ? '較去年' : '較上月';
+      const label = this.viewMode === 'year' ? '較去年' : (this.kpiCompareMode === 'yoy' ? '較去年同月' : '較上月');
       if (cur === prev) return { text: label + ' 持平', good: null };
       if (!prev) return { text: label + ' 新增', good: null };
       const pct = Math.round(((cur - prev) / Math.abs(prev)) * 100);
@@ -663,6 +679,11 @@ const DashboardView = {
         <select v-if="viewMode === 'month'" v-model.number="month">
           <option v-for="m in monthOptions" :key="m" :value="m">{{ m }} 月</option>
         </select>
+      </div>
+
+      <div v-if="viewMode === 'month'" class="chip-row" style="margin: -6px 0 10px;">
+        <span class="chip" :class="{ selected: kpiCompareMode === 'prev' }" @click="kpiCompareMode = 'prev'">較上月</span>
+        <span class="chip" :class="{ selected: kpiCompareMode === 'yoy' }" @click="kpiCompareMode = 'yoy'">較去年同月</span>
       </div>
 
       <div class="kpi-row">
@@ -895,10 +916,22 @@ const DashboardView = {
               transform="rotate(-90 50 50)"
             />
           </svg>
-          <div v-for="row in fixedExpenseRows" :key="row.key" class="bar-row">
-            <span class="legend-swatch" :style="{ background: row.color }"></span>
-            <span class="bar-name">{{ row.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
-            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
+          <div v-for="row in fixedExpenseCappedRows" :key="row.key">
+            <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleFixedExpenseOther()">
+              <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+              <span class="bar-name">{{ row.category.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
+              <span v-if="row.otherRows" class="expand-arrow" :class="{ open: fixedExpenseOtherOpen }">›</span>
+              <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
+            </div>
+            <div v-if="row.otherRows && fixedExpenseOtherOpen" class="category-detail">
+              <div v-for="d in row.otherRows" :key="d.key" class="category-detail-row">
+                <span class="category-detail-note">{{ d.category.name }}</span>
+                <span class="category-detail-bar-track">
+                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
+                </span>
+                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+              </div>
+            </div>
           </div>
         </template>
       </section>
