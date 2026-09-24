@@ -993,9 +993,16 @@ button.primary {
 .trend-readout.empty { color: var(--muted); font-size: 12px; }
 
 /* 匯率設定 rows on the 帳戶 screen. */
-.rate-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.rate-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .rate-label { min-width: 130px; }
-.rate-row input { width: 120px; }
+.rate-row input { width: 120px; max-width: 100%; }
+/* The 生效日 picker drops to its own line when the row is too narrow (phones)
+   instead of pushing past the panel's edge. */
+.rate-row .field-hint { display: flex; align-items: center; gap: 6px; margin-top: 0; }
+.rate-row .field-hint input { width: auto; min-width: 0; }
+@media (max-width: 480px) {
+  .rate-row .field-hint { flex-basis: 100%; }
+}
 
 .asset-formula { margin: -2px 0 8px; }
 
