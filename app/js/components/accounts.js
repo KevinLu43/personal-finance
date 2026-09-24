@@ -150,6 +150,7 @@ const AccountsView = {
     };
   },
   computed: {
+    sync() { return window.SyncInfo; },
     accounts() {
       return Store.state.accounts.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     },
@@ -249,6 +250,7 @@ const AccountsView = {
     },
   },
   methods: {
+    openSheet() { window.open(this.sync.sheetUrl, '_blank', 'noopener'); },
     // The still-pledged stocks of one loan, oldest first.
     pledgesOf(loanId) {
       return Store.state.pledges
@@ -554,6 +556,13 @@ const AccountsView = {
           </div>
         </div>
         <div v-if="loanAccounts.length === 0" class="empty">還沒有借款</div>
+      </section>
+
+      <section v-if="sync.mode === 'google'" class="panel span-2">
+        <h3>雲端同步</h3>
+        <p class="muted" style="margin: -4px 0 10px;">資料存放在你的 Google 試算表,任何裝置登入同一個 Google 帳號都能使用</p>
+        <button v-if="sync.sheetUrl" @click="openSheet">開啟試算表</button>
+        <button @click="sync.signOut()">登出 Google</button>
       </section>
 
       <section class="panel span-2">

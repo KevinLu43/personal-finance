@@ -1,3 +1,7 @@
+// What the 帳戶 page needs to show about the Google connection (which sheet,
+// how to sign out) without reaching into RootApp. RootApp fills it in.
+window.SyncInfo = Vue.reactive({ mode: 'local', sheetUrl: '', signOut: null });
+
 const RootApp = {
   data() {
     return {
@@ -42,6 +46,8 @@ const RootApp = {
       return;
     }
     this.mode = 'google';
+    SyncInfo.mode = 'google';
+    SyncInfo.signOut = () => this.signOut();
     try {
       await GoogleApi.init(cfg.googleClientId);
     } catch (err) {
@@ -78,6 +84,7 @@ const RootApp = {
         window.Db = sdb;
         await Store.init();
         this.sheetUrl = GoogleApi.sheetUrl() || '';
+        SyncInfo.sheetUrl = this.sheetUrl;
         this.lastRefresh = Date.now();
         this.phase = 'ready';
       } catch (err) {
@@ -149,14 +156,15 @@ const RootApp = {
     </div>
     <div v-else-if="!ready" class="loading">{{ phase === 'connecting' ? '連線到 Google 試算表…' : '載入中…' }}</div>
     <div v-else class="app-shell">
-      <div v-if="mode === 'google'" class="sync-pill" :class="syncState" :title="syncMessage">
-        <span>{{ syncLabel }}</span>
-        <button v-if="syncState === 'error' && syncNeedsAuth" @click="reauth">重新登入</button>
-        <button v-else-if="syncState === 'error'" @click="retrySync">重試</button>
-        <a v-if="sheetUrl && syncState !== 'error'" :href="sheetUrl" target="_blank" rel="noopener">試算表</a>
-        <button v-if="syncState !== 'error'" @click="signOut">登出</button>
-      </div>
       <main class="app-main">
+        <div v-if="mode === 'google'" class="sync-status" :class="syncState" :title="syncMessage">
+          <template v-if="syncState === 'error'">
+            <span>{{ syncLabel }}:{{ syncMessage }}</span>
+            <button v-if="syncNeedsAuth" @click="reauth">重新登入</button>
+            <button v-else @click="retrySync">重試</button>
+          </template>
+          <span v-else>{{ syncLabel }}</span>
+        </div>
         <DashboardView v-if="tab === 'dashboard'" />
         <TransactionsView v-else-if="tab === 'transactions'" />
         <InvestmentsView v-else-if="tab === 'investments'" />
