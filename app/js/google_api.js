@@ -12,6 +12,9 @@
   const DRIVE_FILES = 'https://www.googleapis.com/drive/v3/files';
   const REMEMBER_KEY = 'pf_google_signed_in';
   const SHEET_ID_KEY = 'pf_google_sheet_id';
+  const TOKEN_KEY = 'pf_google_token';
+  // A saved token must still have at least this long to live to be reused.
+  const TOKEN_MIN_LIFE_MS = 5 * 60 * 1000;
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -46,8 +49,36 @@
     });
   }
 
+  // Google's access tokens last about an hour and there's no server here to
+  // renew them, so a token is kept in this browser's localStorage until it
+  // expires — reopening the app within the hour needs no sign-in. It only
+  // grants the drive.file scope (files this app created) and lives on this
+  // origin, on this device; signing out or a rejected token clears it.
+  function saveToken() {
+    store.set(TOKEN_KEY, JSON.stringify({ token, expiresAt }));
+  }
+
+  function restoreToken() {
+    try {
+      const saved = JSON.parse(store.get(TOKEN_KEY) || 'null');
+      if (saved && saved.token && saved.expiresAt - Date.now() > TOKEN_MIN_LIFE_MS) {
+        token = saved.token;
+        expiresAt = saved.expiresAt;
+        return;
+      }
+    } catch (e) { /* unreadable: treat as none */ }
+    store.del(TOKEN_KEY);
+  }
+
+  function dropToken() {
+    token = null;
+    expiresAt = 0;
+    store.del(TOKEN_KEY);
+  }
+
   async function init(id) {
     clientId = id;
+    restoreToken();
     await loadGis();
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: clientId,
@@ -69,6 +100,7 @@
         if (resp && resp.access_token) {
           token = resp.access_token;
           expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+          saveToken();
           store.set(REMEMBER_KEY, '1');
           done(resolve, token);
         } else {
@@ -99,8 +131,7 @@
     if (token && window.google) {
       try { window.google.accounts.oauth2.revoke(token, () => {}); } catch (e) { /* best effort */ }
     }
-    token = null;
-    expiresAt = 0;
+    dropToken();
     store.del(REMEMBER_KEY);
     store.del(SHEET_ID_KEY);
   }
@@ -123,7 +154,7 @@
       }
       if (res.status === 401 && !authRetried) {
         authRetried = true;
-        token = null;
+        dropToken();
         continue;
       }
       if ((res.status === 429 || res.status >= 500) && attempt < 4) {
@@ -279,7 +310,8 @@
   window.GoogleApi = {
     configured: () => !!(window.APP_CONFIG && window.APP_CONFIG.googleClientId),
     isRemembered: () => store.get(REMEMBER_KEY) === '1',
-    init, signIn, trySilent, signOut, transport,
+    init, signIn, trySilent, getToken, signOut, transport,
+    hasValidToken: () => !!token && Date.now() < expiresAt - 60000,
     sheetUrl: () => (spreadsheetId ? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` : null),
   };
 })();

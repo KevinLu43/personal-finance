@@ -67,7 +67,7 @@ const RootApp = {
       this.loginError = '';
       try {
         if (interactive) await GoogleApi.signIn();
-        else await GoogleApi.trySilent();
+        else await GoogleApi.getToken(); // a saved, unexpired token, else a quiet sign-in
         const sdb = SheetsDb.create({ transport: GoogleApi.transport, name: cfg.spreadsheetName });
         // The type round-trip check only needs to pass once per device.
         const checkedKey = 'pf_sheet_verified';
