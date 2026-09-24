@@ -640,6 +640,23 @@ const DashboardView = {
     // Unlike categoryLabelBreakdown above, a label's own drill-down is still
     // by note — labels don't nest the way categories do, so "which notes
     // carry this label" is the only breakdown that says anything new.
+    // Where a label's spend went, by expense category — the reverse of
+    // categoryLabelBreakdown, so a label (which cuts across categories) can
+    // be read back down into them.
+    labelCategoryBreakdown(labelId) {
+      const taggedIds = new Set(
+        Store.state.transactionLabels.filter((tl) => tl.labelId === labelId).map((tl) => tl.transactionId)
+      );
+      const byCategory = new Map();
+      for (const t of this.periodExpenseTransactions) {
+        if (!taggedIds.has(t.id)) continue;
+        const key = t.categoryId || '';
+        byCategory.set(key, (byCategory.get(key) || 0) + t.amount);
+      }
+      return [...byCategory.entries()]
+        .map(([id, amount]) => ({ category: Store.state.categories.find((c) => c.id === id) || null, amount }))
+        .sort((a, b) => b.amount - a.amount);
+    },
     labelNoteBreakdown(labelId) {
       const taggedIds = new Set(
         Store.state.transactionLabels.filter((tl) => tl.labelId === labelId).map((tl) => tl.transactionId)
@@ -887,6 +904,15 @@ const DashboardView = {
               </div>
             </template>
             <template v-else>
+              <div class="category-detail-heading">依分類</div>
+              <div v-for="d in labelCategoryBreakdown(row.label.id)" :key="d.category ? d.category.id : '__none__'" class="category-detail-row">
+                <span class="category-detail-note">{{ d.category ? (d.category.icon || '') + ' ' + d.category.name : '(未分類)' }}</span>
+                <span class="category-detail-bar-track">
+                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: (d.category && d.category.color) || '#adb5bd' }"></span>
+                </span>
+                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+              </div>
+              <div class="category-detail-heading">依備註</div>
               <div v-for="d in labelNoteBreakdown(row.label.id)" :key="d.note" class="category-detail-row">
                 <span class="category-detail-note">{{ d.note }}</span>
                 <span class="category-detail-bar-track">

@@ -183,6 +183,19 @@ const TransactionFormModal = {
     labels() {
       return Store.activeLabels();
     },
+    // Labels this category usually carries (from its recent transactions),
+    // shown first so a long label list doesn't have to be scanned. Purely a
+    // shortcut: every label stays available below.
+    suggestedLabels() {
+      if (this.form.type === 'transfer') return [];
+      const ids = Models.suggestLabelIdsForCategory(Store.state.transactions, Store.state.transactionLabels, this.form.categoryId);
+      const byId = new Map(this.labels.map((l) => [l.id, l]));
+      return ids.map((id) => byId.get(id)).filter(Boolean);
+    },
+    otherLabels() {
+      const suggested = new Set(this.suggestedLabels.map((l) => l.id));
+      return this.labels.filter((l) => !suggested.has(l.id));
+    },
     categoryOptions() {
       return Store.activeCategories(this.form.type === 'income' ? 'income' : 'expense');
     },
@@ -386,9 +399,20 @@ const TransactionFormModal = {
           </label>
           <label>備註 <input v-model="form.note" /></label>
           <label>標籤
+            <template v-if="suggestedLabels.length">
+              <div class="chip-group-title">此分類常用</div>
+              <div class="chip-row">
+                <span
+                  v-for="l in suggestedLabels" :key="l.id"
+                  class="chip" :class="{ selected: form.labelNames.includes(l.name) }"
+                  @click="toggleLabel(l.name)"
+                >{{ l.icon || '🏷️' }} {{ l.name }}</span>
+              </div>
+              <div v-if="otherLabels.length" class="chip-group-title">其他標籤</div>
+            </template>
             <div class="chip-row">
               <span
-                v-for="l in labels" :key="l.id"
+                v-for="l in otherLabels" :key="l.id"
                 class="chip" :class="{ selected: form.labelNames.includes(l.name) }"
                 @click="toggleLabel(l.name)"
               >{{ l.icon || '🏷️' }} {{ l.name }}</span>

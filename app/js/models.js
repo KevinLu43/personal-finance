@@ -636,6 +636,30 @@ function monthlyTrend(transactions, endYearMonth, monthCount) {
 // transaction can carry several labels, so this is deliberately not drawn
 // as a pie/donut anywhere it is used: the rows do not partition the total,
 // they overlap by construction, and a ring implies otherwise.
+// The labels most often put on this category's recent transactions, most
+// used first (ties: the one used more recently). Labels are deliberately not
+// tied to a category — this only *suggests*, so the 記帳 form can surface the
+// few a category usually carries without hiding or restricting any others.
+function suggestLabelIdsForCategory(transactions, transactionLabels, categoryId, { limit = 5, sample = 80 } = {}) {
+  if (!categoryId) return [];
+  const recent = transactions
+    .filter((t) => !t.isDeleted && t.categoryId === categoryId)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .slice(0, sample);
+  const rank = new Map(recent.map((t, i) => [t.id, i]));
+  const counts = new Map();
+  const newest = new Map();
+  for (const tl of transactionLabels) {
+    const r = rank.get(tl.transactionId);
+    if (r === undefined) continue;
+    counts.set(tl.labelId, (counts.get(tl.labelId) || 0) + 1);
+    if (!newest.has(tl.labelId) || r < newest.get(tl.labelId)) newest.set(tl.labelId, r);
+  }
+  return [...counts.keys()]
+    .sort((a, b) => counts.get(b) - counts.get(a) || newest.get(a) - newest.get(b))
+    .slice(0, limit);
+}
+
 function labelBreakdown(expenseTransactions, transactionLabels, labels) {
   const byLabel = new Map();
   for (const t of expenseTransactions) {
@@ -1286,6 +1310,7 @@ window.Models = {
   formatMoney,
   rateOf,
   normalizeRateHistory,
+  suggestLabelIdsForCategory,
   marketCurrency,
   toBaseTransactions,
   accountBalance,
