@@ -83,8 +83,29 @@ const DashboardAccountGroups = {
   `,
 };
 
+// The body of an expanded label in 標籤統計: a summary line, then a titled list
+// of bar rows per breakdown. Purely presentational — DashboardView.labelDetail
+// prepares `detail` (already formatted), so a label in the list and a label
+// folded under 其他 render through the same code.
+const LabelDetail = {
+  props: ['detail'],
+  template: `
+    <div class="category-detail-summary">{{ detail.summary }}</div>
+    <template v-for="sec in detail.sections" :key="sec.title">
+      <div class="category-detail-heading">{{ sec.title }}</div>
+      <div v-for="r in sec.rows" :key="r.key" class="category-detail-row">
+        <span class="category-detail-note">{{ r.name }}</span>
+        <span class="category-detail-bar-track">
+          <span class="category-detail-bar-fill" :style="{ width: r.pct + '%', background: r.color }"></span>
+        </span>
+        <span class="category-detail-amount" :class="{ wide: r.wide }">{{ r.text }}</span>
+      </div>
+    </template>
+  `,
+};
+
 const DashboardView = {
-  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups, DashboardAccountGroups },
+  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups, DashboardAccountGroups, LabelDetail },
   data() {
     const now = new Date();
     return {
@@ -96,6 +117,7 @@ const DashboardView = {
       editingId: null,
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
+      expandedOtherLabelId: null, // ...and, when that row is 其他, which label inside it is expanded
       labelScope: 'period', // 標籤統計 reads the selected month/year ('period') or every date ('all') — for a trip spanning months
       incomeOtherOpen: false, // 收入分類's folded 其他 row
       fixedExpenseOtherOpen: false, // 固定支出（月）'s folded 其他 row
@@ -640,6 +662,10 @@ const DashboardView = {
     },
     toggleLabelExpand(labelId) {
       this.expandedLabelId = this.expandedLabelId === labelId ? null : labelId;
+      this.expandedOtherLabelId = null;
+    },
+    toggleOtherLabelExpand(labelId) {
+      this.expandedOtherLabelId = this.expandedOtherLabelId === labelId ? null : labelId;
     },
     toggleMonthExpand(key) {
       this.expandedMonth = this.expandedMonth === key ? null : key;
@@ -724,6 +750,37 @@ const DashboardView = {
       const days = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
       const max = Math.max(...days.map(([, amount]) => amount), 1);
       return days.map(([date, amount]) => ({ date, label: date.slice(5).replace('-', '/'), amount, pct: amount / max * 100 }));
+    },
+    // Everything LabelDetail shows for one label. `total` is what the bars are
+    // shares of: the label's own spend in the scope.
+    labelDetail(labelId, total) {
+      const share = (amount) => (total > 0 ? amount / total * 100 : 0);
+      const sections = [{
+        title: '依分類',
+        rows: this.labelCategoryBreakdown(labelId).map((d) => ({
+          key: d.category ? d.category.id : '__none__',
+          name: d.category ? `${d.category.icon || ''} ${d.category.name}` : '(未分類)',
+          color: (d.category && d.category.color) || '#adb5bd',
+          pct: share(d.amount),
+          text: this.fmt(d.amount),
+        })),
+      }];
+      const accounts = this.labelAccountBreakdown(labelId);
+      if (accounts.length) {
+        sections.push({
+          title: '依帳戶',
+          rows: accounts.map((d) => ({ key: d.accountId, name: `${d.icon} ${d.name}`, pct: d.pct, text: d.text, wide: true })),
+        });
+      }
+      sections.push({
+        title: '依日期',
+        rows: this.labelDayBreakdown(labelId).map((d) => ({ key: d.date, name: d.label, pct: d.pct, text: this.fmt(d.amount) })),
+      });
+      sections.push({
+        title: '依備註',
+        rows: this.labelNoteBreakdown(labelId).map((d) => ({ key: d.note, name: d.note, pct: share(d.amount), text: this.fmt(d.amount) })),
+      });
+      return { summary: this.labelSummaryText(labelId), sections };
     },
     labelNoteBreakdown(labelId) {
       const byNote = new Map();
@@ -963,51 +1020,21 @@ const DashboardView = {
           </div>
           <div v-if="expandedLabelId === row.label.id" class="category-detail">
             <template v-if="row.otherRows">
-              <div v-for="d in row.otherRows" :key="d.label.id" class="category-detail-row">
-                <span class="category-detail-note">{{ d.label.icon || '🏷️' }} {{ d.label.name }}</span>
-                <span class="category-detail-bar-track">
-                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.label.color || '#6d6875' }"></span>
-                </span>
-                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-              </div>
-            </template>
-            <template v-else>
-              <div class="category-detail-summary">{{ labelSummaryText(row.label.id) }}</div>
-              <div class="category-detail-heading">依分類</div>
-              <div v-for="d in labelCategoryBreakdown(row.label.id)" :key="d.category ? d.category.id : '__none__'" class="category-detail-row">
-                <span class="category-detail-note">{{ d.category ? (d.category.icon || '') + ' ' + d.category.name : '(未分類)' }}</span>
-                <span class="category-detail-bar-track">
-                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: (d.category && d.category.color) || '#adb5bd' }"></span>
-                </span>
-                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-              </div>
-              <template v-if="labelAccountBreakdown(row.label.id).length">
-                <div class="category-detail-heading">依帳戶</div>
-                <div v-for="d in labelAccountBreakdown(row.label.id)" :key="d.accountId" class="category-detail-row">
-                  <span class="category-detail-note">{{ d.icon }} {{ d.name }}</span>
+              <template v-for="d in row.otherRows" :key="d.label.id">
+                <div class="category-detail-row clickable-row" @click="toggleOtherLabelExpand(d.label.id)">
+                  <span class="category-detail-note">{{ d.label.icon || '🏷️' }} {{ d.label.name }}</span>
                   <span class="category-detail-bar-track">
-                    <span class="category-detail-bar-fill" :style="{ width: d.pct + '%' }"></span>
+                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.label.color || '#6d6875' }"></span>
                   </span>
-                  <span class="category-detail-amount wide">{{ d.text }}</span>
+                  <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+                  <span class="expand-arrow" :class="{ open: expandedOtherLabelId === d.label.id }">›</span>
+                </div>
+                <div v-if="expandedOtherLabelId === d.label.id" class="category-detail">
+                  <LabelDetail :detail="labelDetail(d.label.id, d.amount)" />
                 </div>
               </template>
-              <div class="category-detail-heading">依日期</div>
-              <div v-for="d in labelDayBreakdown(row.label.id)" :key="d.date" class="category-detail-row">
-                <span class="category-detail-note">{{ d.label }}</span>
-                <span class="category-detail-bar-track">
-                  <span class="category-detail-bar-fill" :style="{ width: d.pct + '%' }"></span>
-                </span>
-                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-              </div>
-              <div class="category-detail-heading">依備註</div>
-              <div v-for="d in labelNoteBreakdown(row.label.id)" :key="d.note" class="category-detail-row">
-                <span class="category-detail-note">{{ d.note }}</span>
-                <span class="category-detail-bar-track">
-                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%' }"></span>
-                </span>
-                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-              </div>
             </template>
+            <LabelDetail v-else :detail="labelDetail(row.label.id, row.amount)" />
           </div>
         </div>
       </section>
