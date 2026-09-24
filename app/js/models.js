@@ -231,7 +231,10 @@ function labelIcon(label) {
 
 function newTransaction(fields) {
   return {
-    id: uuid(),
+    // Auto-booked transactions (recurring rules, loan installments) pass a
+    // deterministic id derived from what they are for, so two devices that
+    // both book the same due item write the *same* record instead of two.
+    id: fields.id || uuid(),
     date: fields.date, // 'YYYY-MM-DD'
     type: fields.type, // expense | income | transfer
     amount: Math.abs(fields.amount),

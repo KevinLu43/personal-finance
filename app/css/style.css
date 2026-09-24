@@ -1018,3 +1018,24 @@ button.primary {
   .asset-liability-col { flex: 1; min-width: 0; }
   .asset-liability-col + .asset-liability-col { padding-left: 18px; border-left: 1px solid var(--line); }
 }
+
+/* ---- Google login gate + sync status -------------------------------------- */
+.login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.login-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 32px 24px; max-width: 360px; width: 100%; text-align: center; }
+.login-title { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+.login-note { color: var(--muted); font-size: 14px; line-height: 1.6; margin: 0 0 20px; }
+.login-btn { font-size: 15px; padding: 10px 20px; }
+.login-error { color: var(--expense); font-size: 13px; margin: 14px 0 0; word-break: break-word; }
+
+.sync-pill {
+  position: fixed; right: 10px; top: 8px; z-index: 50;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; color: var(--muted);
+}
+.sync-pill.syncing { color: var(--warning); }
+.sync-pill.error { color: var(--expense); border-color: var(--expense); }
+.sync-pill button, .sync-pill a { background: none; border: none; padding: 0; font-size: 12px; color: var(--accent); text-decoration: underline; cursor: pointer; }
+@media (max-width: 767px) {
+  .sync-pill { top: auto; bottom: 64px; right: 8px; opacity: 0.92; }
+}

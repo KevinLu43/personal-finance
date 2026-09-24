@@ -114,7 +114,8 @@ async function migrateLoanTypes() {
   }
   for (let i = 0; i < state.pledges.length; i++) {
     const p = state.pledges[i];
-    if (p.amount !== undefined) continue;
+    // == null: a sheet-backed store reads a missing cell back as null, not undefined.
+    if (p.amount != null) continue;
     const loan = state.accounts.find((a) => a.id === p.loanAccountId);
     const updated = {
       ...p,
@@ -169,6 +170,13 @@ async function init() {
   await loadAll();
   await bookDueItems();
   state.ready = true;
+}
+
+// Re-reads everything after the storage layer pulled in another device's
+// changes (Db.refresh), then books whatever has fallen due since.
+async function reloadFromDb() {
+  await loadAll();
+  await bookDueItems();
 }
 
 // --- Accounts ---
@@ -259,10 +267,11 @@ async function ensureInterestCategory() {
 // Books one interest payment as an expense on the chosen account. Shared by
 // a whole loan's settlement and by a single pledged stock's, which differ
 // only in how the amount is worked out and how the note names it.
-async function bookInterest(label, interest, fromDate, toDate, payFromAccountId, { loanId, loanRefId } = {}) {
+async function bookInterest(label, interest, fromDate, toDate, payFromAccountId, { loanId, loanRefId, id } = {}) {
   if (interest <= 0) return;
   const category = await ensureInterestCategory();
   await addTransaction({
+    id,
     date: toDate,
     type: 'expense',
     amount: interest,
@@ -305,6 +314,7 @@ async function generateLoanInstallments(loanId) {
     const label = `${loan.name} 第 ${loan.loanPaidInstallments + 1}/${loan.loanInstallments} 期`;
     if (principal > 0) {
       await addTransaction({
+        id: `loan:${loan.id}:${due}:principal`,
         date: due,
         type: 'transfer',
         amount: principal,
@@ -315,7 +325,7 @@ async function generateLoanInstallments(loanId) {
         loanRefId: loan.id,
       });
     }
-    await bookInterest(label, interest, due, due, loan.loanPayFromAccountId, { loanId: loan.id, loanRefId: loan.id });
+    await bookInterest(label, interest, due, due, loan.loanPayFromAccountId, { loanId: loan.id, loanRefId: loan.id, id: `loan:${loan.id}:${due}:interest` });
     await updateAccount(loan.id, {
       loanPaidInstallments: loan.loanPaidInstallments + 1,
       loanNextDue: Models.addMonthClamped(due, anchorDay),
@@ -533,7 +543,11 @@ function activeLabels() {
 async function addTransaction(fields, labelNames = []) {
   const transaction = Models.newTransaction(fields);
   await Db.put('transactions', transaction);
-  state.transactions.push(transaction);
+  // A caller-supplied id (auto-booking) can already be in memory — replace
+  // rather than list the same transaction twice.
+  const existingIdx = state.transactions.findIndex((t) => t.id === transaction.id);
+  if (existingIdx !== -1) state.transactions[existingIdx] = transaction;
+  else state.transactions.push(transaction);
   await setTransactionLabels(transaction.id, labelNames);
   return transaction;
 }
@@ -563,7 +577,7 @@ async function setTransactionLabels(transactionId, labelNames) {
   for (const name of labelNames) {
     const label = await findOrCreateLabel(name);
     if (!label) continue;
-    const link = { id: Models.uuid(), transactionId, labelId: label.id };
+    const link = { id: `${transactionId}:${label.id}`, transactionId, labelId: label.id };
     await Db.put('transactionLabels', link);
     state.transactionLabels.push(link);
   }
@@ -655,8 +669,12 @@ async function generateDueForOne(r) {
   const { dates, nextDueDate, remainingOccurrences } = Models.dueOccurrences(r, today);
   if (dates.length === 0) return;
   for (const date of dates) {
+    // Already booked (another device got there first): nothing to add.
+    const id = `rec:${r.id}:${date}`;
+    if (state.transactions.some((t) => t.id === id)) continue;
     await addTransaction(
       {
+        id,
         date,
         type: r.type,
         amount: r.amount,
@@ -798,6 +816,7 @@ async function restoreFromBackup(backup) {
 window.Store = {
   state,
   init,
+  reloadFromDb,
   exportBackupData,
   restoreFromBackup,
   addAccount,

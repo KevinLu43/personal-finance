@@ -117,4 +117,8 @@ async function countAll(storeName) {
   });
 }
 
-window.Db = { STORES, getAll, put, putAll, clear, remove, countAll };
+window.LocalDb = { STORES, getAll, put, putAll, clear, remove, countAll };
+// `Db` is what the rest of the app talks to. It starts as this local store;
+// app.js swaps in the Google Sheets one (sheets_db.js, same interface) once
+// the operator has signed in, so no call site needs to know which is active.
+window.Db = window.LocalDb;
