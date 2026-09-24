@@ -114,6 +114,7 @@ const InvestmentOverviewView = {
       formDefaultDate: null,
       expandedDate: null, // which 交易明細 date group is expanded, one at a time
       expandedHoldingKey: null, // which holding row's trade history is open, one at a time ('market:ticker')
+      clearedOpen: false, // the 已出清 group under the holdings list is folded until asked for
       fixOpen: false, // the 補上代號 dialog
     };
   },
@@ -196,6 +197,19 @@ const InvestmentOverviewView = {
     currentHoldings() {
       if (this.selectedCategory === 'US') return this.allHoldings.filter((h) => h.market === 'US');
       return this.allHoldings.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === this.selectedCategory);
+    },
+    // Held vs. fully sold is decided by the quantity left, recomputed from the
+    // trades every time — so a cleared stock that is bought again is simply
+    // back among the held ones, with its earlier realized P/L still counted.
+    activeHoldings() {
+      return this.currentHoldings.filter((h) => h.quantity > 0);
+    },
+    clearedHoldings() {
+      return this.currentHoldings.filter((h) => !(h.quantity > 0));
+    },
+    // Held first, then the cleared ones (shown only when their group is open).
+    orderedHoldings() {
+      return [...this.activeHoldings, ...this.clearedHoldings];
     },
     currentRealizedPL() {
       return this.currentHoldings.reduce((s, h) => s + h.realizedPL, 0);
@@ -464,17 +478,24 @@ const InvestmentOverviewView = {
                 <span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ NT$ {{ fmt(toBase(currentRealizedPL)) }})</span>
               </span>
             </div>
-            <div v-for="h in currentHoldings" :key="holdingKey(h)">
+            <template v-for="(h, idx) in orderedHoldings" :key="holdingKey(h)">
+              <div v-if="idx === activeHoldings.length" class="list-row clickable cleared-header" @click="clearedOpen = !clearedOpen">
+                <div class="list-row-main">
+                  <div class="list-row-title">已出清<span class="ticker-name">{{ clearedHoldings.length }} 檔</span></div>
+                </div>
+                <span class="expand-arrow" :class="{ open: clearedOpen }">›</span>
+              </div>
+              <div v-if="h.quantity > 0 || clearedOpen" :class="{ 'holding-cleared': !(h.quantity > 0) }">
               <div class="list-row clickable" @click="toggleHoldingExpand(h)">
                 <div class="list-row-main">
-                  <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span></div>
+                  <div class="list-row-title">{{ h.ticker }}<span v-if="nameOf(h)" class="ticker-name">{{ nameOf(h) }}</span><span v-if="!(h.quantity > 0)" class="cleared-badge">已出清</span></div>
                   <div class="list-row-sub">
-                    {{ accountName(h) }} · {{ h.quantity > 0 ? ('持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost)) : '已出清' }}
+                    {{ accountName(h) }}<template v-if="h.quantity > 0"> · {{ '持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost) }}</template>
                     <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
                   </div>
                 </div>
                 <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">
-                  {{ h.realizedPL > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(h.realizedPL, currentCurrency) }}
+                  <span v-if="!(h.quantity > 0)" class="amount-note">最終損益 </span>{{ h.realizedPL > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(h.realizedPL, currentCurrency) }}
                   <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.realizedPL)) }}</div>
                 </div>
                 <span class="expand-arrow" :class="{ open: expandedHoldingKey === holdingKey(h) }">›</span>
@@ -482,7 +503,8 @@ const InvestmentOverviewView = {
               <template v-if="expandedHoldingKey === holdingKey(h)">
                 <InvestmentRowItem v-for="i in holdingTrades(h)" :key="i.id" :investment="i" show-date @edit="openEdit" @remove="remove" />
               </template>
-            </div>
+              </div>
+            </template>
           </section>
         </template>
 

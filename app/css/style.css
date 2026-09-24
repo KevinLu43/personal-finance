@@ -1049,3 +1049,9 @@ button.primary {
 .category-detail-summary { font-size: 12px; color: var(--ink); margin: 2px 0 4px; }
 .category-detail-amount.wide { width: auto; min-width: 56px; }
 .category-detail-row.clickable-row { cursor: pointer; }
+
+/* 投資總覽: a fully sold holding is marked and dimmed, and grouped under 已出清. */
+.cleared-header { border-top: 1px dashed var(--line); color: var(--muted); }
+.holding-cleared { opacity: 0.65; }
+.cleared-badge { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--line); color: var(--muted); font-size: 11px; font-weight: 400; vertical-align: middle; }
+.amount-note { font-size: 11px; color: var(--muted); font-weight: 400; margin-right: 4px; }
