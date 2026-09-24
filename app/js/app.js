@@ -68,7 +68,7 @@ const RootApp = {
       try {
         if (interactive) await GoogleApi.signIn();
         else await GoogleApi.getToken(); // a saved, unexpired token, else a quiet sign-in
-        const sdb = SheetsDb.create({ transport: GoogleApi.transport, name: cfg.spreadsheetName });
+        const sdb = SheetsDb.create({ transport: GoogleApi.transport, name: cfg.spreadsheetName, outbox: SheetsDb.idbOutbox() });
         // The type round-trip check only needs to pass once per device.
         const checkedKey = 'pf_sheet_verified';
         let verified = false;
@@ -107,7 +107,7 @@ const RootApp = {
       try { await this.sdb.resume(); } catch (err) { /* the status pill shows it */ }
     },
     signOut() {
-      if (this.sdb && this.sdb.isDirty() && !confirm('還有資料尚未同步到 Google,登出後會遺失。確定要登出嗎?')) return;
+      if (this.sdb && this.sdb.isDirty() && !confirm('還有資料尚未同步到 Google(下次登入後會自動補送)。確定要登出嗎?')) return;
       GoogleApi.signOut();
       location.reload();
     },

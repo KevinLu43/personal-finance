@@ -12,6 +12,9 @@
 //  - Writes update the cache immediately and are sent to Google in the
 //    background, debounced and batched (a few API calls per burst, well
 //    inside Google's per-minute quota). A failed write is kept and retried.
+//  - Changes not yet confirmed by Google are also kept in an "outbox" on this
+//    device (IndexedDB) and put back on the next open, so closing the app or
+//    losing the connection before a write lands doesn't lose it.
 //  - Rows are located by id at flush time (never by a remembered row number),
 //    so sorting the sheet by hand or another device appending rows can't make
 //    a write land on the wrong record.
@@ -65,11 +68,100 @@
 
   const q = (tab) => `'${tab}'`;
 
-  function create({ transport, name = '個人財務資料', debounceMs = 400 }) {
+  // ---- the outbox ---------------------------------------------------------
+  // Where unsent changes wait. Same shape as a `pending` snapshot, stored per
+  // spreadsheet id so another Google account's sheet never inherits them.
+  // Best effort: if IndexedDB is unavailable syncing still works, it just
+  // isn't crash-safe.
+  function idbOutbox() {
+    let dbp = null;
+    const open = () => dbp || (dbp = new Promise((resolve, reject) => {
+      const req = indexedDB.open('pf_outbox', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('kv', { keyPath: 'key' });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+    const run = async (mode, fn) => {
+      const db = await open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('kv', mode);
+        const req = fn(tx.objectStore('kv'));
+        tx.oncomplete = () => resolve(req && req.result);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    };
+    return {
+      async load(key) {
+        const row = await run('readonly', (st) => st.get(key));
+        return row ? row.data : null;
+      },
+      async save(key, data) {
+        await run('readwrite', (st) => (data ? st.put({ key, data }) : st.delete(key)));
+      },
+    };
+  }
+
+  function emptySnapshot() {
+    const p = { upserts: {}, removes: {}, clears: new Set() };
+    STORES.forEach((s) => { p.upserts[s] = new Map(); p.removes[s] = new Set(); });
+    return p;
+  }
+
+  function snapshotIsEmpty(snap) {
+    if (snap.clears.size) return false;
+    return !STORES.some((s) => snap.upserts[s].size || snap.removes[s].size);
+  }
+
+  // The changes of `first` followed by those of `second`, as one snapshot —
+  // what the sheet should end up as if both were applied in order. A clear in
+  // `second` wipes whatever `first` had queued for that tab.
+  function compose(first, second) {
+    const out = emptySnapshot();
+    for (const s of STORES) {
+      let up = new Map(first.upserts[s]);
+      let rm = new Set(first.removes[s]);
+      if (second.clears.has(s)) { up = new Map(); rm = new Set(); }
+      for (const [id, rec] of second.upserts[s]) { up.set(id, rec); rm.delete(id); }
+      for (const id of second.removes[s]) { up.delete(id); rm.add(id); }
+      out.upserts[s] = up;
+      out.removes[s] = rm;
+    }
+    out.clears = new Set([...first.clears, ...second.clears]);
+    return out;
+  }
+
+  function snapshotToStored(snap) {
+    const data = { upserts: {}, removes: {}, clears: [...snap.clears] };
+    for (const s of STORES) {
+      if (snap.upserts[s].size) data.upserts[s] = [...snap.upserts[s].values()];
+      if (snap.removes[s].size) data.removes[s] = [...snap.removes[s]];
+    }
+    return data;
+  }
+
+  function snapshotFromStored(data) {
+    const snap = emptySnapshot();
+    if (!data) return snap;
+    for (const s of STORES) {
+      for (const rec of (data.upserts && data.upserts[s]) || []) {
+        if (rec && rec.id !== undefined && rec.id !== null) snap.upserts[s].set(String(rec.id), rec);
+      }
+      for (const id of (data.removes && data.removes[s]) || []) snap.removes[s].add(String(id));
+    }
+    for (const s of (data.clears || [])) if (STORES.includes(s)) snap.clears.add(s);
+    return snap;
+  }
+
+  function create({ transport, name = '個人財務資料', debounceMs = 400, outbox = null }) {
     const cache = {};
     STORES.forEach((s) => { cache[s] = new Map(); });
-    let pending = emptyPending();
+    let pending = emptySnapshot();
+    let inflight = null; // the batch currently being sent (still unconfirmed)
     let flushing = null;
+    let outboxKey = null;
+    let persistTimer = null;
+    let persistChain = Promise.resolve();
     let timer = null;
     let retryTimer = null;
     let retryDelay = 5000;
@@ -77,15 +169,38 @@
     const listeners = new Set();
     let info = null;
 
-    function emptyPending() {
-      const p = { upserts: {}, removes: {}, clears: new Set() };
-      STORES.forEach((s) => { p.upserts[s] = new Map(); p.removes[s] = new Set(); });
-      return p;
+    function hasPending() {
+      return !snapshotIsEmpty(pending);
     }
 
-    function hasPending() {
-      if (pending.clears.size) return true;
-      return STORES.some((s) => pending.upserts[s].size || pending.removes[s].size);
+    // Everything sent-but-unconfirmed or still queued.
+    function unconfirmed() {
+      return inflight ? compose(inflight, pending) : pending;
+    }
+
+    // Writes the unconfirmed changes to the outbox on the next tick — one
+    // write per burst of edits (a backup restore is thousands of puts), yet
+    // early enough that closing the app right after an edit still keeps it.
+    function persistSoon() {
+      if (!outbox || !outboxKey || persistTimer) return;
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        const snap = unconfirmed();
+        const data = snapshotIsEmpty(snap) ? null : snapshotToStored(snap);
+        persistChain = persistChain
+          .then(() => outbox.save(outboxKey, data))
+          .catch((err) => console.warn('outbox save failed', err));
+      }, 0);
+    }
+
+    // Puts queued changes over the freshly-read sheet so the cache shows the
+    // operator's own not-yet-sent edits, not the older sheet contents.
+    function overlay(snap) {
+      for (const s of STORES) {
+        if (snap.clears.has(s)) cache[s] = new Map();
+        for (const [id, rec] of snap.upserts[s]) cache[s].set(id, rec);
+        for (const id of snap.removes[s]) cache[s].delete(id);
+      }
     }
 
     function setStatus(state, err) {
@@ -119,6 +234,9 @@
         }
         cache[s] = map;
       });
+      // A write made while this read was in flight would otherwise vanish from
+      // the cache until it reached the sheet.
+      overlay(unconfirmed());
     }
 
     // ---- writing ---------------------------------------------------------
@@ -180,35 +298,23 @@
       if (deletes.length) await transport.deleteRows(deletes);
     }
 
-    // What a failed flush didn't get written goes back into `pending`, unless
-    // something newer has already superseded it.
-    function mergeBack(snap) {
-      STORES.forEach((s) => {
-        for (const [id, rec] of snap.upserts[s]) {
-          if (pending.removes[s].has(id) || pending.upserts[s].has(id)) continue;
-          pending.upserts[s].set(id, rec);
-        }
-        for (const id of snap.removes[s]) {
-          if (pending.upserts[s].has(id)) continue;
-          pending.removes[s].add(id);
-        }
-      });
-      snap.clears.forEach((s) => pending.clears.add(s));
-    }
-
     async function runFlush() {
       while (hasPending()) {
-        const snap = pending;
-        pending = emptyPending();
+        inflight = pending;
+        pending = emptySnapshot();
         setStatus('syncing');
         try {
-          await applySnapshot(snap);
+          await applySnapshot(inflight);
         } catch (err) {
-          mergeBack(snap);
+          // What didn't get written goes back in front of anything queued since.
+          pending = compose(inflight, pending);
+          inflight = null;
           setStatus('error', err);
           scheduleRetry(err);
           throw err;
         }
+        inflight = null;
+        persistSoon(); // confirmed: the outbox can shrink
       }
       retryDelay = 5000;
       setStatus('idle');
@@ -233,6 +339,7 @@
     }
 
     function schedule() {
+      persistSoon();
       clearTimeout(timer);
       timer = setTimeout(() => { flush().catch(() => {}); }, debounceMs);
     }
@@ -310,10 +417,42 @@
       }
     }
 
+    // Changes left unsent by an earlier session come back into the queue. One
+    // that the sheet has meanwhile moved past (another device saved the same
+    // record later) is dropped rather than overwriting the newer version.
+    async function restoreOutbox() {
+      if (!outbox) return;
+      let stored;
+      try {
+        stored = await outbox.load(outboxKey);
+      } catch (err) {
+        console.warn('outbox load failed', err);
+        return;
+      }
+      const snap = snapshotFromStored(stored);
+      for (const s of STORES) {
+        if (snap.clears.has(s)) continue; // a wholesale replace is intentional
+        for (const [id, rec] of [...snap.upserts[s]]) {
+          const remote = cache[s].get(id);
+          if (remote && remote.updatedAt && rec.updatedAt && remote.updatedAt > rec.updatedAt) snap.upserts[s].delete(id);
+        }
+      }
+      if (snapshotIsEmpty(snap)) {
+        if (stored) persistSoon();
+        return;
+      }
+      pending = compose(snap, pending);
+      overlay(snap);
+      persistSoon();
+      schedule();
+    }
+
     async function connect({ verify = false } = {}) {
       info = await transport.connect(name, [...STORES, CHECK_TAB]);
       if (verify) await verifyRoundTrip();
+      outboxKey = info.spreadsheetId;
       await loadAll();
+      await restoreOutbox();
       setStatus('idle');
       return info;
     }
@@ -345,5 +484,5 @@
     };
   }
 
-  window.SheetsDb = { create, encodeCell, decodeCell, STORES };
+  window.SheetsDb = { create, idbOutbox, encodeCell, decodeCell, STORES };
 })();
