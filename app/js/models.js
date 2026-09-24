@@ -1306,6 +1306,7 @@ window.Models = {
   labelIcon,
   newTransaction,
   CURRENCIES,
+  daysBetween,
   currencySymbol,
   formatMoney,
   rateOf,

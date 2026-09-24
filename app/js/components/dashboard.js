@@ -96,6 +96,7 @@ const DashboardView = {
       editingId: null,
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
+      labelScope: 'period', // 標籤統計 reads the selected month/year ('period') or every date ('all') — for a trip spanning months
       incomeOtherOpen: false, // 收入分類's folded 其他 row
       fixedExpenseOtherOpen: false, // 固定支出（月）'s folded 其他 row
       creditDebtOtherOpen: false, // 信用卡欠款's folded 其他 row
@@ -312,8 +313,20 @@ const DashboardView = {
         (t) => !t.isDeleted && t.type === 'expense' && t.date.startsWith(this.periodPrefix)
       );
     },
+    // What 標籤統計 works from: the selected period, or all expenses ever.
+    labelScopeTransactions() {
+      if (this.labelScope === 'all') {
+        return Store.baseTransactionList().filter((t) => !t.isDeleted && t.type === 'expense');
+      }
+      return this.periodExpenseTransactions;
+    },
+    // Each transaction's own-currency amount, so a label's spend can be shown
+    // in yen/dollars as well as the TWD it converts to.
+    nativeAmountById() {
+      return new Map(Store.state.transactions.map((t) => [t.id, t.amount]));
+    },
     labelBreakdown() {
-      return Models.labelBreakdown(this.periodExpenseTransactions, Store.state.transactionLabels, Store.state.labels);
+      return Models.labelBreakdown(this.labelScopeTransactions, Store.state.transactionLabels, Store.state.labels);
     },
     labelBreakdownRows() {
       return this.capBreakdown(this.labelBreakdown, 'label');
@@ -640,16 +653,34 @@ const DashboardView = {
     // Unlike categoryLabelBreakdown above, a label's own drill-down is still
     // by note — labels don't nest the way categories do, so "which notes
     // carry this label" is the only breakdown that says anything new.
+    // The scoped expense transactions carrying this label — what every
+    // 標籤統計 drill-down below reads from.
+    labelTransactions(labelId) {
+      const taggedIds = new Set(
+        Store.state.transactionLabels.filter((tl) => tl.labelId === labelId).map((tl) => tl.transactionId)
+      );
+      return this.labelScopeTransactions.filter((t) => taggedIds.has(t.id));
+    },
+    // "2026-09-01 ~ 2026-09-07 · 共 7 天 · 平均每天 1,234 · 12 筆" — the span
+    // runs first to last transaction, so a trip reads as one stretch even when
+    // some days had no spending.
+    labelSummaryText(labelId) {
+      const txs = this.labelTransactions(labelId);
+      if (txs.length === 0) return '';
+      const dates = txs.map((t) => t.date).sort();
+      const first = dates[0];
+      const last = dates[dates.length - 1];
+      const span = Models.daysBetween(first, last) + 1;
+      const total = txs.reduce((s, t) => s + t.amount, 0);
+      const range = first === last ? first : `${first} ~ ${last}`;
+      return `${range} · 共 ${span} 天 · 平均每天 ${this.fmt(total / span)} · ${txs.length} 筆`;
+    },
     // Where a label's spend went, by expense category — the reverse of
     // categoryLabelBreakdown, so a label (which cuts across categories) can
     // be read back down into them.
     labelCategoryBreakdown(labelId) {
-      const taggedIds = new Set(
-        Store.state.transactionLabels.filter((tl) => tl.labelId === labelId).map((tl) => tl.transactionId)
-      );
       const byCategory = new Map();
-      for (const t of this.periodExpenseTransactions) {
-        if (!taggedIds.has(t.id)) continue;
+      for (const t of this.labelTransactions(labelId)) {
         const key = t.categoryId || '';
         byCategory.set(key, (byCategory.get(key) || 0) + t.amount);
       }
@@ -657,13 +688,46 @@ const DashboardView = {
         .map(([id, amount]) => ({ category: Store.state.categories.find((c) => c.id === id) || null, amount }))
         .sort((a, b) => b.amount - a.amount);
     },
+    // Spend per account it was paid from, biggest first: TWD it converts to,
+    // plus the account's own-currency amount when that isn't TWD. Empty when
+    // one TWD account paid for everything — a single row says nothing.
+    labelAccountBreakdown(labelId) {
+      const byAccount = new Map();
+      for (const t of this.labelTransactions(labelId)) {
+        const row = byAccount.get(t.accountId) || { accountId: t.accountId, native: 0, base: 0 };
+        row.native += this.nativeAmountById.get(t.id) || 0;
+        row.base += t.amount;
+        byAccount.set(t.accountId, row);
+      }
+      const rows = [...byAccount.values()].map((r) => {
+        const account = Store.state.accounts.find((x) => x.id === r.accountId);
+        const code = Store.currencyOfAccount(r.accountId);
+        return {
+          ...r,
+          icon: account ? Models.accountIcon(account) : '❔',
+          name: account ? account.name : '(已刪除帳戶)',
+          text: code === 'TWD' ? this.fmt(r.base) : `${Models.currencySymbol(code)}${Models.formatMoney(r.native, code)} ≈ ${this.fmt(r.base)}`,
+        };
+      });
+      const foreign = rows.some((r) => Store.currencyOfAccount(r.accountId) !== 'TWD');
+      if (rows.length < 2 && !foreign) return [];
+      const total = rows.reduce((sum, r) => sum + r.base, 0) || 1; // bars are shares of the label's total, like 依分類
+      return rows.sort((x, y) => y.base - x.base).map((r) => ({ ...r, pct: r.base / total * 100 }));
+    },
+    // Spend per calendar day, oldest first, with each day's share of the
+    // busiest one for the bar length.
+    labelDayBreakdown(labelId) {
+      const byDay = new Map();
+      for (const t of this.labelTransactions(labelId)) {
+        byDay.set(t.date, (byDay.get(t.date) || 0) + t.amount);
+      }
+      const days = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+      const max = Math.max(...days.map(([, amount]) => amount), 1);
+      return days.map(([date, amount]) => ({ date, label: date.slice(5).replace('-', '/'), amount, pct: amount / max * 100 }));
+    },
     labelNoteBreakdown(labelId) {
-      const taggedIds = new Set(
-        Store.state.transactionLabels.filter((tl) => tl.labelId === labelId).map((tl) => tl.transactionId)
-      );
       const byNote = new Map();
-      for (const t of this.periodExpenseTransactions) {
-        if (!taggedIds.has(t.id)) continue;
+      for (const t of this.labelTransactions(labelId)) {
         const key = t.note.trim() || '(無備註)';
         byNote.set(key, (byNote.get(key) || 0) + t.amount);
       }
@@ -884,8 +948,12 @@ const DashboardView = {
       </section>
 
       <section class="panel">
-        <h3>{{ viewMode === 'year' ? '全年標籤統計' : '標籤統計' }}</h3>
-        <div v-if="labelBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄' }}</div>
+        <h3>{{ labelScope === 'all' ? '標籤統計 · 全部期間' : (viewMode === 'year' ? '全年標籤統計' : '標籤統計') }}</h3>
+        <div class="chip-row" style="margin: 0 0 8px;">
+          <span class="chip" :class="{ selected: labelScope === 'period' }" @click="labelScope = 'period'">{{ viewMode === 'year' ? '本年' : '本月' }}</span>
+          <span class="chip" :class="{ selected: labelScope === 'all' }" @click="labelScope = 'all'">全部期間</span>
+        </div>
+        <div v-if="labelBreakdown.length === 0" class="empty">{{ labelScope === 'all' ? '還沒有標籤紀錄' : (viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄') }}</div>
         <div v-for="row in labelBreakdownRows" :key="row.label.id">
           <div class="bar-row clickable" @click="toggleLabelExpand(row.label.id)">
             <span class="icon-badge-sm" :style="{ background: (row.label.color || '#6d6875') + '30' }">{{ row.label.icon || '🏷️' }}</span>
@@ -904,11 +972,30 @@ const DashboardView = {
               </div>
             </template>
             <template v-else>
+              <div class="category-detail-summary">{{ labelSummaryText(row.label.id) }}</div>
               <div class="category-detail-heading">依分類</div>
               <div v-for="d in labelCategoryBreakdown(row.label.id)" :key="d.category ? d.category.id : '__none__'" class="category-detail-row">
                 <span class="category-detail-note">{{ d.category ? (d.category.icon || '') + ' ' + d.category.name : '(未分類)' }}</span>
                 <span class="category-detail-bar-track">
                   <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: (d.category && d.category.color) || '#adb5bd' }"></span>
+                </span>
+                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+              </div>
+              <template v-if="labelAccountBreakdown(row.label.id).length">
+                <div class="category-detail-heading">依帳戶</div>
+                <div v-for="d in labelAccountBreakdown(row.label.id)" :key="d.accountId" class="category-detail-row">
+                  <span class="category-detail-note">{{ d.icon }} {{ d.name }}</span>
+                  <span class="category-detail-bar-track">
+                    <span class="category-detail-bar-fill" :style="{ width: d.pct + '%' }"></span>
+                  </span>
+                  <span class="category-detail-amount wide">{{ d.text }}</span>
+                </div>
+              </template>
+              <div class="category-detail-heading">依日期</div>
+              <div v-for="d in labelDayBreakdown(row.label.id)" :key="d.date" class="category-detail-row">
+                <span class="category-detail-note">{{ d.label }}</span>
+                <span class="category-detail-bar-track">
+                  <span class="category-detail-bar-fill" :style="{ width: d.pct + '%' }"></span>
                 </span>
                 <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
               </div>
