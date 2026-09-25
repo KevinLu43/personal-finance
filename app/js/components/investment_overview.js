@@ -100,7 +100,7 @@ const TickerFixModal = {
 };
 
 const InvestmentOverviewView = {
-  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal },
+  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal, DividendFormModal },
   data() {
     const now = new Date();
     return {
@@ -115,6 +115,7 @@ const InvestmentOverviewView = {
       expandedDate: null, // which 交易明細 date group is expanded, one at a time
       expandedHoldingKey: null, // which holding row's trade history is open, one at a time ('market:ticker')
       clearedOpen: false, // the 已出清 group under the holdings list is folded until asked for
+      dividendForm: null, // null closed, or { id: 'new' | a dividend's id, accountId, ticker } to open the 股利 form
       fixOpen: false, // the 補上代號 dialog
     };
   },
@@ -197,6 +198,13 @@ const InvestmentOverviewView = {
     currentHoldings() {
       if (this.selectedCategory === 'US') return this.allHoldings.filter((h) => h.market === 'US');
       return this.allHoldings.filter((h) => h.market === 'TW' && Models.twInvestmentCategory(h.ticker) === this.selectedCategory);
+    },
+    // Cash dividends per holding (as received, in the holding's currency).
+    dividendStats() {
+      return Models.dividendsByHolding(Store.state.transactions, Models.localToday());
+    },
+    currentDividendTotal() {
+      return this.currentHoldings.reduce((sum, h) => sum + (this.dividendOf(h) ? this.dividendOf(h).total : 0), 0);
     },
     // Held vs. fully sold is decided by the quantity left, recomputed from the
     // trades every time — so a cleared stock that is bought again is simply
@@ -378,6 +386,25 @@ const InvestmentOverviewView = {
           return a.updatedAt < b.updatedAt ? 1 : -1;
         });
     },
+    dividendOf(h) {
+      return this.dividendStats.get(this.holdingKey(h)) || null;
+    },
+    // Dividends over the last 12 months against what the shares cost — only
+    // for a holding still owned, since a sold one has no cost left.
+    dividendYieldText(h) {
+      const d = this.dividendOf(h);
+      if (!d || !(h.quantity > 0) || !(h.costBasis > 0) || !(d.last12 > 0)) return '';
+      return (d.last12 / h.costBasis * 100).toFixed(1) + '%';
+    },
+    fmtNative(n) {
+      return (this.currentCurrency !== 'TWD' ? this.currencySymbol(this.currentCurrency) : '') + this.fmtCur(n, this.currentCurrency);
+    },
+    openDividend(id, h) {
+      this.dividendForm = { id, accountId: h ? h.accountId : null, ticker: h ? h.ticker : null };
+    },
+    dividendRowTitle(t) {
+      return `${t.date} 配息 · 每股 ${t.dividend.perShare} × ${t.dividend.shares} 股`;
+    },
     openNew() {
       const today = Models.localToday();
       this.formDefaultDate = today.startsWith(this.yearMonth) ? today : `${this.yearMonth}-01`;
@@ -476,6 +503,7 @@ const InvestmentOverviewView = {
               <span :class="currentRealizedPL >= 0 ? 'positive' : 'negative'">
                 已實現 {{ currentRealizedPL >= 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(currentRealizedPL, currentCurrency) }}
                 <span v-if="currentCurrency !== 'TWD'" class="muted"> (≈ NT$ {{ fmt(toBase(currentRealizedPL)) }})</span>
+                <span v-if="currentDividendTotal > 0" class="positive"> · 股利 +{{ fmtNative(currentDividendTotal) }}</span>
               </span>
             </div>
             <template v-for="(h, idx) in orderedHoldings" :key="holdingKey(h)">
@@ -492,6 +520,7 @@ const InvestmentOverviewView = {
                   <div class="list-row-sub">
                     {{ accountName(h) }}<template v-if="h.quantity > 0"> · {{ '持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost) }}</template>
                     <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
+                    <span v-if="dividendOf(h)" class="positive"> · 股利 +{{ fmtNative(dividendOf(h).total) }}<template v-if="dividendYieldText(h)"> · 殖利率 {{ dividendYieldText(h) }}</template></span>
                   </div>
                 </div>
                 <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">
@@ -502,6 +531,14 @@ const InvestmentOverviewView = {
               </div>
               <template v-if="expandedHoldingKey === holdingKey(h)">
                 <InvestmentRowItem v-for="i in holdingTrades(h)" :key="i.id" :investment="i" show-date @edit="openEdit" @remove="remove" />
+                <div v-for="t in (dividendOf(h) ? dividendOf(h).items : [])" :key="t.id" class="list-row clickable dividend-row" @click="openDividend(t.id, h)">
+                  <div class="list-row-main">
+                    <span class="icon-badge" style="background: #e9a23b30;">🪙</span>
+                    <span class="list-row-title">{{ dividendRowTitle(t) }}</span>
+                  </div>
+                  <div class="list-row-amount positive">+{{ fmtNative(t.amount) }}</div>
+                </div>
+                <div class="dividend-add"><button @click.stop="openDividend('new', h)">＋ 記這檔的股利</button></div>
               </template>
               </div>
             </template>
@@ -552,6 +589,13 @@ const InvestmentOverviewView = {
 
       <TickerFixModal v-if="fixOpen" @close="fixOpen = false" />
 
+      <DividendFormModal
+        v-if="dividendForm"
+        :editing-id="dividendForm.id"
+        :preset-account-id="dividendForm.accountId"
+        :preset-ticker="dividendForm.ticker"
+        @close="dividendForm = null"
+      />
       <InvestmentFormModal
         v-if="editingId"
         :editing-id="editingId"

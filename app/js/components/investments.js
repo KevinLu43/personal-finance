@@ -372,7 +372,7 @@ const InvestmentFormModal = {
 };
 
 const InvestmentsView = {
-  components: { InvestmentRowItem, InvestmentFormModal, InvestmentTickerGroupList },
+  components: { InvestmentRowItem, InvestmentFormModal, InvestmentTickerGroupList, DividendFormModal },
   data() {
     const now = new Date();
     return {
@@ -381,6 +381,7 @@ const InvestmentsView = {
       selectedDay: Models.localToday(),
       editingId: null,
       formDefaultDate: null,
+      dividendEditingId: null, // null closed, 'new' or a dividend transaction's id
     };
   },
   computed: {
@@ -414,6 +415,14 @@ const InvestmentsView = {
       if (!this.selectedDay) return [];
       return Store.state.investments
         .filter((i) => !i.isDeleted && i.date === this.selectedDay)
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    },
+    // The day's cash dividends, shown beside its trades so an entry made
+    // here is visible right after saving.
+    selectedDayDividends() {
+      if (!this.selectedDay) return [];
+      return Store.state.transactions
+        .filter((t) => !t.isDeleted && t.date === this.selectedDay && Models.isDividendTransaction(t))
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     },
     twInvestments() {
@@ -470,6 +479,22 @@ const InvestmentsView = {
       if (payload && payload.date) this.selectedDay = payload.date;
       this.editingId = null;
     },
+    openDividend(id) {
+      this.formDefaultDate = this.selectedDay;
+      this.dividendEditingId = id;
+    },
+    onDividendClosed(payload) {
+      if (payload && payload.date) this.selectedDay = payload.date;
+      this.dividendEditingId = null;
+    },
+    dividendTitle(t) {
+      const name = window.tickerName(t.dividend.market, t.dividend.ticker);
+      return `${t.dividend.ticker}${name ? ' ' + name : ''}`;
+    },
+    dividendAmount(t) {
+      const code = Store.currencyOfAccount(t.accountId);
+      return (code === 'TWD' ? '' : Models.currencySymbol(code)) + Models.formatMoney(t.amount, code);
+    },
     async remove(inv) {
       if (!confirm('刪除這筆交易？')) return;
       await Store.deleteInvestment(inv.id);
@@ -488,7 +513,10 @@ const InvestmentsView = {
     <div class="view">
       <div class="view-header">
         <h2>投資</h2>
-        <button class="primary" @click="openNew()">+ 新增</button>
+        <span>
+          <button @click="openDividend('new')">+ 股利</button>
+          <button class="primary" @click="openNew()">+ 新增</button>
+        </span>
       </div>
 
       <div class="panel-grid">
@@ -525,9 +553,20 @@ const InvestmentsView = {
           <button class="primary" @click="openNew(selectedDay)">+ 新增</button>
         </div>
 
-        <div v-if="selectedDayInvestments.length === 0" class="empty">這天還沒有投資交易</div>
+        <div v-if="selectedDayInvestments.length === 0 && selectedDayDividends.length === 0" class="empty">這天還沒有投資交易</div>
 
         <template v-else>
+          <div v-if="selectedDayDividends.length" class="subsection">
+            <div class="subsection-header"><span>股利</span></div>
+            <div v-for="t in selectedDayDividends" :key="t.id" class="list-row clickable" @click="openDividend(t.id)">
+              <div class="list-row-main">
+                <span class="icon-badge" style="background: #e9a23b30;">🪙</span>
+                <span class="list-row-title">{{ dividendTitle(t) }}</span>
+                <div class="list-row-sub">每股 {{ t.dividend.perShare }} × {{ t.dividend.shares }} 股</div>
+              </div>
+              <div class="list-row-amount positive">+{{ dividendAmount(t) }}</div>
+            </div>
+          </div>
           <div v-if="twInvestments.length" class="subsection">
             <div class="subsection-header">
               <span>台股</span>
@@ -558,6 +597,12 @@ const InvestmentsView = {
         :editing-id="editingId"
         :default-date="formDefaultDate"
         @close="onFormClosed"
+      />
+      <DividendFormModal
+        v-if="dividendEditingId"
+        :editing-id="dividendEditingId"
+        :default-date="formDefaultDate"
+        @close="onDividendClosed"
       />
     </div>
   `,

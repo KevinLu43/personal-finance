@@ -264,6 +264,48 @@ async function ensureInterestCategory() {
   return addCategory({ name: '利息', kind: 'expense', icon: '💸', color: '#9c6644' });
 }
 
+// The income category every cash dividend is filed under, created on first use
+// (same idea as 利息 for loan interest) so it stays apart from 投資收益.
+async function ensureDividendCategory() {
+  const existing = state.categories.find((c) => c.kind === 'income' && c.name === Models.DIVIDEND_CATEGORY_NAME);
+  if (existing) return existing;
+  return addCategory({ name: Models.DIVIDEND_CATEGORY_NAME, kind: 'income', icon: '🪙', color: '#e9a23b' });
+}
+
+// A cash dividend as an income transaction: `amount` is what actually landed
+// (gross less deductions), on the account that received it; the `dividend`
+// block ties it to the holding for per-stock totals and yield.
+function dividendTransactionFields(f, categoryId) {
+  const name = typeof window.tickerName === 'function' ? window.tickerName(f.market, f.ticker) : '';
+  return {
+    date: f.date,
+    type: 'income',
+    amount: f.gross - f.deduction,
+    accountId: f.receiveAccountId,
+    categoryId,
+    note: `${f.ticker}${name ? ' ' + name : ''} 配息`,
+    dividend: {
+      accountId: f.holdingAccountId,
+      market: f.market,
+      ticker: f.ticker,
+      perShare: f.perShare,
+      shares: f.shares,
+      gross: f.gross,
+      deduction: f.deduction,
+    },
+  };
+}
+
+async function addDividend(f) {
+  const category = await ensureDividendCategory();
+  return addTransaction(dividendTransactionFields(f, category.id));
+}
+
+async function updateDividend(id, f) {
+  const category = await ensureDividendCategory();
+  await updateTransaction(id, dividendTransactionFields(f, category.id));
+}
+
 // Books one interest payment as an expense on the chosen account. Shared by
 // a whole loan's settlement and by a single pledged stock's, which differ
 // only in how the amount is worked out and how the note names it.
@@ -555,7 +597,11 @@ async function addTransaction(fields, labelNames = []) {
 async function updateTransaction(id, fields, labelNames = null) {
   const idx = state.transactions.findIndex((t) => t.id === id);
   if (idx === -1) return;
-  const updated = { ...state.transactions[idx], ...fields, updatedAt: Models.nowIso() };
+  // A plain copy of the stored record first: a dividend's nested `dividend`
+  // block would otherwise reach Db.put as a Vue reactive proxy, which
+  // IndexedDB's structured clone rejects (a shallow spread only unwraps the top level).
+  const current = JSON.parse(JSON.stringify(state.transactions[idx]));
+  const updated = { ...current, ...fields, updatedAt: Models.nowIso() };
   await Db.put('transactions', updated);
   state.transactions[idx] = updated;
   if (labelNames !== null) await setTransactionLabels(id, labelNames);
@@ -836,6 +882,8 @@ window.Store = {
   addTransaction,
   updateTransaction,
   deleteTransaction,
+  addDividend,
+  updateDividend,
   labelsForTransaction,
   activeAccounts,
   activeCategories,

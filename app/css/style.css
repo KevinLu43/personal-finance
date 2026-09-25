@@ -1058,3 +1058,7 @@ button.primary {
 .category-detail-heading.foldable { cursor: pointer; user-select: none; }
 .category-detail-heading .expand-arrow { margin-right: 4px; }
 .category-detail-heading .heading-count { margin-left: 6px; font-weight: 400; }
+
+/* Cash dividends listed under a holding in 投資總覽. */
+.dividend-add { padding: 4px 0 8px 28px; }
+.dividend-add button { font-size: 12px; }

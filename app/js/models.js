@@ -260,6 +260,10 @@ function newTransaction(fields) {
     // installment payments and also a pledged stock's interest — so deleting
     // the loan can find every record that only existed because of it.
     loanRefId: fields.loanRefId || null,
+    // A cash dividend (an income transaction) names the holding it came from:
+    // { accountId, market, ticker, perShare, shares, gross, deduction }, where
+    // accountId is the 證券交割 account holding the shares. Null on everything else.
+    dividend: fields.dividend || null,
     isDeleted: false,
     updatedAt: nowIso(),
   };
@@ -929,6 +933,50 @@ function suggestTickerCodes(directory, text) {
 // every account's own row instead of the single (arbitrary) one a plain
 // .find() would have picked — every real caller always passes accountId
 // (accounts don't share holdings), but this stays correct either way.
+// ---- Cash dividends ----
+// A dividend is an ordinary income transaction (so balances, income totals and
+// trends need no special case) that carries a `dividend` block naming its
+// holding; these helpers read that block back.
+const DIVIDEND_CATEGORY_NAME = '股利／配息';
+
+function isDividendTransaction(t) {
+  return !!(t && t.dividend && t.dividend.ticker);
+}
+
+// Shares of a holding owned on `date` (trades dated on or before it).
+function quantityHeldOn(investments, { accountId, market, ticker }, date) {
+  let quantity = 0;
+  for (const i of investments) {
+    if (i.isDeleted || i.accountId !== accountId || i.market !== market || i.ticker !== ticker || i.date > date) continue;
+    quantity += i.action === 'buy' ? i.quantity : -i.quantity;
+  }
+  return Math.max(0, quantity);
+}
+
+// Dividends grouped per holding, keyed 'accountId:market:ticker' like the
+// holdings list: { total, last12, count, items } with amounts as received (in
+// the holding's own currency) and items newest first. last12 covers the year
+// up to `asOfDate`.
+function dividendsByHolding(transactions, asOfDate) {
+  const [y, m, d] = asOfDate.split('-');
+  const yearAgo = `${Number(y) - 1}-${m}-${d}`;
+  const byKey = new Map();
+  for (const t of transactions) {
+    if (t.isDeleted || !isDividendTransaction(t)) continue;
+    const key = `${t.dividend.accountId}:${t.dividend.market}:${t.dividend.ticker}`;
+    const entry = byKey.get(key) || { total: 0, last12: 0, count: 0, items: [] };
+    entry.total += t.amount;
+    if (t.date > yearAgo && t.date <= asOfDate) entry.last12 += t.amount;
+    entry.count += 1;
+    entry.items.push(t);
+    byKey.set(key, entry);
+  }
+  for (const entry of byKey.values()) {
+    entry.items.sort((a, b) => (a.date === b.date ? (a.updatedAt < b.updatedAt ? 1 : -1) : a.date < b.date ? 1 : -1));
+  }
+  return byKey;
+}
+
 function heldQuantityOf(investments, { market, ticker, accountId, excludeId }) {
   const list = investments.filter(
     (i) => i.market === market && i.ticker === ticker && (!accountId || i.accountId === accountId) && i.id !== excludeId
@@ -1307,6 +1355,10 @@ window.Models = {
   newTransaction,
   CURRENCIES,
   daysBetween,
+  DIVIDEND_CATEGORY_NAME,
+  isDividendTransaction,
+  quantityHeldOn,
+  dividendsByHolding,
   currencySymbol,
   formatMoney,
   rateOf,

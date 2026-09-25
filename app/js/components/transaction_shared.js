@@ -158,7 +158,7 @@ const LoanPaymentRow = {
 };
 
 const TransactionFormModal = {
-  components: { CalculatorField },
+  components: { CalculatorField, DividendFormModal },
   props: {
     // 'new' or an existing transaction's id. The component reads its own
     // starting values from the Store, so the caller need not build a form
@@ -176,6 +176,14 @@ const TransactionFormModal = {
   computed: {
     isNew() {
       return this.editingId === 'new';
+    },
+    // A dividend is edited in its own form (per-share x shares, deductions),
+    // wherever its income row was clicked — the generic form would let the
+    // amount drift away from the dividend it was built from.
+    isDividendEdit() {
+      if (this.isNew) return false;
+      const t = Store.state.transactions.find((x) => x.id === this.editingId);
+      return Models.isDividendTransaction(t);
     },
     accounts() {
       return Store.activeAccounts();
@@ -359,7 +367,8 @@ const TransactionFormModal = {
     },
   },
   template: `
-    <div class="modal-backdrop" @click.self="cancel">
+    <DividendFormModal v-if="isDividendEdit" :editing-id="editingId" @close="$emit('close', $event)" />
+    <div v-else class="modal-backdrop" @click.self="cancel">
       <div class="modal">
         <h3>{{ isNew ? '新增紀錄' : '編輯紀錄' }}</h3>
         <div class="modal-body">
