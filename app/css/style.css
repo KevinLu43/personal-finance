@@ -814,7 +814,9 @@ button.primary {
   background: var(--accent);
   color: white;
 }
-.modal-actions button.danger { border: none; background: none; color: var(--expense); padding-left: 0; }
+/* Delete: same shape as 取消/儲存, outlined in red like the 刪除 buttons on the
+   帳戶/分類 lists — not a bare red word beside two boxed buttons. */
+.modal-actions button.danger { border: 1px solid var(--expense); background: none; color: var(--expense); }
 
 /* Hover feedback for every clickable control, including the calendar day
    cells — added because without it, nothing on screen changes as the
@@ -856,7 +858,7 @@ button.primary {
   button.primary:hover { filter: brightness(1.1); }
   .modal-actions button:hover { background: var(--line); }
   .modal-actions button.primary:hover { background: var(--accent); filter: brightness(1.1); }
-  .modal-actions button.danger:hover { text-decoration: underline; }
+  .modal-actions button.danger:hover { background: var(--expense); color: white; }
 }
 
 /* A wide viewport gets a desktop shell instead of a phone-width column
