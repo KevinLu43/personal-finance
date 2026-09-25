@@ -182,9 +182,11 @@ const InvestmentOverviewView = {
           const rateOf = (h) => Models.rateOf(Models.marketCurrency(h.market), Store.state.rateHistory);
           const amount = costRows.reduce((s, h) => s + h.costBasis * rateOf(h), 0);
           const realizedPL = plRows.reduce((s, h) => s + h.realizedPL * rateOf(h), 0);
-          return { value: opt.value, category: { name: opt.label, color: ALLOCATION_COLORS[opt.value] }, amount, realizedPL };
+          // Dividends too count for every holding ever in the category, sold or not.
+          const dividend = plRows.reduce((s, h) => s + (this.dividendBaseByHolding.get(this.holdingKey(h)) || 0), 0);
+          return { value: opt.value, category: { name: opt.label, color: ALLOCATION_COLORS[opt.value] }, amount, realizedPL, dividend };
         })
-        .filter((row) => row.amount > 0 || row.realizedPL !== 0);
+        .filter((row) => row.amount > 0 || row.realizedPL !== 0 || row.dividend > 0);
     },
     allocationTotal() {
       return this.allocationBreakdown.reduce((s, row) => s + row.amount, 0);
@@ -202,6 +204,20 @@ const InvestmentOverviewView = {
     // Cash dividends per holding (as received, in the holding's currency).
     dividendStats() {
       return Models.dividendsByHolding(Store.state.transactions, Models.localToday());
+    },
+    // The same, in TWD, each dividend at its own payment date's rate — what
+    // the totals across markets add up.
+    dividendBaseByHolding() {
+      const byKey = new Map();
+      for (const [key, entry] of this.dividendStats) {
+        byKey.set(key, entry.items.reduce((sum, t) => sum + Store.baseAmountOf(t), 0));
+      }
+      return byKey;
+    },
+    totalDividend() {
+      let total = 0;
+      for (const v of this.dividendBaseByHolding.values()) total += v;
+      return total;
     },
     currentDividendTotal() {
       return this.currentHoldings.reduce((sum, h) => sum + (this.dividendOf(h) ? this.dividendOf(h).total : 0), 0);
@@ -424,7 +440,7 @@ const InvestmentOverviewView = {
   template: `
     <div class="view">
       <div class="view-header">
-        <h2>投資總覽<span class="muted"> · 已實現(台幣){{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}</span></h2>
+        <h2>投資總覽<span class="muted"> · 已實現(台幣){{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}<template v-if="totalDividend > 0"> · 股利(台幣)+{{ fmt(totalDividend) }}</template></span></h2>
       </div>
 
       <div v-if="needsTickerFix" class="notice-bar">
@@ -450,6 +466,7 @@ const InvestmentOverviewView = {
           <span class="month-table-cell">佔比</span>
           <span class="month-table-cell">成本</span>
           <span class="month-table-cell">已實現</span>
+          <span class="month-table-cell">股利</span>
         </div>
         <div
           v-for="row in allocationBreakdown" :key="row.value" class="month-table-row clickable"
@@ -460,12 +477,14 @@ const InvestmentOverviewView = {
           <span class="month-table-cell">{{ fmtAllocationPercent(row.amount) }}</span>
           <span class="month-table-cell">{{ fmt(row.amount) }}</span>
           <span class="month-table-cell" :class="row.realizedPL >= 0 ? 'positive' : 'negative'">{{ row.realizedPL >= 0 ? '+' : '' }}{{ fmt(row.realizedPL) }}</span>
+          <span class="month-table-cell" :class="row.dividend > 0 ? 'positive' : ''">{{ row.dividend > 0 ? '+' + fmt(row.dividend) : '-' }}</span>
         </div>
         <div class="month-table-row">
           <span class="month-table-cell month" style="font-weight: 700;">合計</span>
           <span class="month-table-cell"></span>
           <span class="month-table-cell" style="font-weight: 700;">{{ fmt(allocationTotal) }}</span>
           <span class="month-table-cell" :class="totalRealizedPL >= 0 ? 'positive' : 'negative'">{{ totalRealizedPL >= 0 ? '+' : '' }}{{ fmt(totalRealizedPL) }}</span>
+          <span class="month-table-cell" :class="totalDividend > 0 ? 'positive' : ''">{{ totalDividend > 0 ? '+' + fmt(totalDividend) : '-' }}</span>
         </div>
       </section>
 

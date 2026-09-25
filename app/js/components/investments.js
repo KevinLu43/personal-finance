@@ -513,8 +513,8 @@ const InvestmentsView = {
     <div class="view">
       <div class="view-header">
         <h2>投資</h2>
-        <span>
-          <button @click="openDividend('new')">+ 股利</button>
+        <span class="header-actions">
+          <button class="primary" @click="openDividend('new')">+ 股利</button>
           <button class="primary" @click="openNew()">+ 新增</button>
         </span>
       </div>
@@ -550,7 +550,10 @@ const InvestmentsView = {
       <section class="panel">
         <div class="view-header">
           <h3>{{ selectedDay }}</h3>
-          <button class="primary" @click="openNew(selectedDay)">+ 新增</button>
+          <span class="header-actions">
+            <button class="primary" @click="openDividend('new')">+ 股利</button>
+            <button class="primary" @click="openNew(selectedDay)">+ 新增</button>
+          </span>
         </div>
 
         <div v-if="selectedDayInvestments.length === 0 && selectedDayDividends.length === 0" class="empty">這天還沒有投資交易</div>
