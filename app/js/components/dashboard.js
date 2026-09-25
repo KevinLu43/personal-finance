@@ -89,17 +89,34 @@ const DashboardAccountGroups = {
 // folded under 其他 render through the same code.
 const LabelDetail = {
   props: ['detail'],
+  data() {
+    // What the operator has toggled; a section not in here follows its own
+    // default (`open` from the parent — the short ones open, the long ones folded).
+    return { toggled: {} };
+  },
+  methods: {
+    isOpen(sec) {
+      return sec.title in this.toggled ? this.toggled[sec.title] : sec.open;
+    },
+    toggle(sec) {
+      this.toggled[sec.title] = !this.isOpen(sec);
+    },
+  },
   template: `
     <div class="category-detail-summary">{{ detail.summary }}</div>
     <template v-for="sec in detail.sections" :key="sec.title">
-      <div class="category-detail-heading">{{ sec.title }}</div>
-      <div v-for="r in sec.rows" :key="r.key" class="category-detail-row">
-        <span class="category-detail-note">{{ r.name }}</span>
-        <span class="category-detail-bar-track">
-          <span class="category-detail-bar-fill" :style="{ width: r.pct + '%', background: r.color }"></span>
-        </span>
-        <span class="category-detail-amount" :class="{ wide: r.wide }">{{ r.text }}</span>
+      <div class="category-detail-heading foldable" @click="toggle(sec)">
+        <span class="expand-arrow" :class="{ open: isOpen(sec) }">›</span>{{ sec.title }}<span class="heading-count">{{ sec.rows.length }}</span>
       </div>
+      <template v-if="isOpen(sec)">
+        <div v-for="r in sec.rows" :key="r.key" class="category-detail-row">
+          <span class="category-detail-note">{{ r.name }}</span>
+          <span class="category-detail-bar-track">
+            <span class="category-detail-bar-fill" :style="{ width: r.pct + '%', background: r.color }"></span>
+          </span>
+          <span class="category-detail-amount" :class="{ wide: r.wide }">{{ r.text }}</span>
+        </div>
+      </template>
     </template>
   `,
 };
@@ -757,6 +774,7 @@ const DashboardView = {
       const share = (amount) => (total > 0 ? amount / total * 100 : 0);
       const sections = [{
         title: '依分類',
+        open: true,
         rows: this.labelCategoryBreakdown(labelId).map((d) => ({
           key: d.category ? d.category.id : '__none__',
           name: d.category ? `${d.category.icon || ''} ${d.category.name}` : '(未分類)',
@@ -769,15 +787,18 @@ const DashboardView = {
       if (accounts.length) {
         sections.push({
           title: '依帳戶',
+          open: true,
           rows: accounts.map((d) => ({ key: d.accountId, name: `${d.icon} ${d.name}`, pct: d.pct, text: d.text, wide: true })),
         });
       }
       sections.push({
         title: '依日期',
+        open: false,
         rows: this.labelDayBreakdown(labelId).map((d) => ({ key: d.date, name: d.label, pct: d.pct, text: this.fmt(d.amount) })),
       });
       sections.push({
         title: '依備註',
+        open: false,
         rows: this.labelNoteBreakdown(labelId).map((d) => ({ key: d.note, name: d.note, pct: share(d.amount), text: this.fmt(d.amount) })),
       });
       return { summary: this.labelSummaryText(labelId), sections };
