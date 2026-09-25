@@ -100,7 +100,7 @@ const TickerFixModal = {
 };
 
 const InvestmentOverviewView = {
-  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal, DividendFormModal },
+  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal, DividendFormModal, DividendRowItem },
   data() {
     const now = new Date();
     return {
@@ -418,8 +418,9 @@ const InvestmentOverviewView = {
     openDividend(id, h) {
       this.dividendForm = { id, accountId: h ? h.accountId : null, ticker: h ? h.ticker : null };
     },
-    dividendRowTitle(t) {
-      return `${t.date} 配息 · 每股 ${t.dividend.perShare} × ${t.dividend.shares} 股`;
+    async removeDividend(t) {
+      if (!confirm('刪除這筆股利？')) return;
+      await Store.deleteTransaction(t.id);
     },
     openNew() {
       const today = Models.localToday();
@@ -550,13 +551,7 @@ const InvestmentOverviewView = {
               </div>
               <template v-if="expandedHoldingKey === holdingKey(h)">
                 <InvestmentRowItem v-for="i in holdingTrades(h)" :key="i.id" :investment="i" show-date @edit="openEdit" @remove="remove" />
-                <div v-for="t in (dividendOf(h) ? dividendOf(h).items : [])" :key="t.id" class="list-row clickable dividend-row" @click="openDividend(t.id, h)">
-                  <div class="list-row-main">
-                    <span class="icon-badge" style="background: #e9a23b30;">🪙</span>
-                    <span class="list-row-title">{{ dividendRowTitle(t) }}</span>
-                  </div>
-                  <div class="list-row-amount positive">+{{ fmtNative(t.amount) }}</div>
-                </div>
+                <DividendRowItem v-for="t in (dividendOf(h) ? dividendOf(h).items : [])" :key="t.id" :dividend="t" show-date @edit="openDividend(t.id, h)" @remove="removeDividend" />
                 <div class="dividend-add"><button @click.stop="openDividend('new', h)">＋ 記這檔的股利</button></div>
               </template>
               </div>

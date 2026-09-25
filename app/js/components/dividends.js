@@ -9,6 +9,58 @@
 // income row, so editing one never goes through the generic form (which
 // would let the amount drift away from per-share x shares).
 
+// One dividend in a list — laid out like InvestmentRowItem (icon, ticker and
+// company, a sub-line, the amount, and ✕ to delete) so a dividend among trades
+// reads and behaves the same way. `dividend` is the income transaction.
+const DividendRowItem = {
+  props: {
+    dividend: { type: Object, required: true },
+    // Lists spanning many dates (a holding's whole history) spell the date out.
+    showDate: { type: Boolean, default: false },
+  },
+  emits: ['edit', 'remove'],
+  computed: {
+    detail() {
+      return this.dividend.dividend;
+    },
+    companyName() {
+      return window.tickerName(this.detail.market, this.detail.ticker);
+    },
+    accountName() {
+      const a = Store.state.accounts.find((x) => x.id === this.dividend.accountId);
+      return a ? a.name : '(已刪除帳戶)';
+    },
+    currency() {
+      return Store.currencyOfAccount(this.dividend.accountId);
+    },
+    nativeAmountText() {
+      const symbol = this.currency === 'TWD' ? '' : Models.currencySymbol(this.currency);
+      return symbol + Models.formatMoney(this.dividend.amount, this.currency);
+    },
+    baseAmountText() {
+      if (this.currency === 'TWD') return '';
+      return '≈ NT$ ' + Math.round(Store.baseAmountOf(this.dividend)).toLocaleString('zh-TW');
+    },
+  },
+  template: `
+    <div class="list-row clickable" @click="$emit('edit', dividend)">
+      <div class="list-row-main">
+        <span class="bar-icon">🪙</span>
+        <span class="list-row-title">{{ detail.ticker }}</span>
+        <span v-if="companyName" class="ticker-name">{{ companyName }}</span>
+        <div class="list-row-sub">
+          <template v-if="showDate">{{ dividend.date }} · </template>配息 · 每股 {{ detail.perShare }} × {{ detail.shares }} 股 · {{ accountName }}
+        </div>
+      </div>
+      <div class="list-row-amount positive">
+        +{{ nativeAmountText }}
+        <div v-if="baseAmountText" class="list-row-sub">{{ baseAmountText }}</div>
+      </div>
+      <button class="row-delete" @click.stop="$emit('remove', dividend)" aria-label="刪除">✕</button>
+    </div>
+  `,
+};
+
 const DividendFormModal = {
   props: {
     editingId: { type: String, required: true }, // 'new' or the dividend transaction's id

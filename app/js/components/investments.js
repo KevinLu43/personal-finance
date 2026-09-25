@@ -372,7 +372,7 @@ const InvestmentFormModal = {
 };
 
 const InvestmentsView = {
-  components: { InvestmentRowItem, InvestmentFormModal, InvestmentTickerGroupList, DividendFormModal },
+  components: { InvestmentRowItem, InvestmentFormModal, InvestmentTickerGroupList, DividendFormModal, DividendRowItem },
   data() {
     const now = new Date();
     return {
@@ -487,13 +487,9 @@ const InvestmentsView = {
       if (payload && payload.date) this.selectedDay = payload.date;
       this.dividendEditingId = null;
     },
-    dividendTitle(t) {
-      const name = window.tickerName(t.dividend.market, t.dividend.ticker);
-      return `${t.dividend.ticker}${name ? ' ' + name : ''}`;
-    },
-    dividendAmount(t) {
-      const code = Store.currencyOfAccount(t.accountId);
-      return (code === 'TWD' ? '' : Models.currencySymbol(code)) + Models.formatMoney(t.amount, code);
+    async removeDividend(t) {
+      if (!confirm('刪除這筆股利？')) return;
+      await Store.deleteTransaction(t.id);
     },
     async remove(inv) {
       if (!confirm('刪除這筆交易？')) return;
@@ -561,14 +557,7 @@ const InvestmentsView = {
         <template v-else>
           <div v-if="selectedDayDividends.length" class="subsection">
             <div class="subsection-header"><span>股利</span></div>
-            <div v-for="t in selectedDayDividends" :key="t.id" class="list-row clickable" @click="openDividend(t.id)">
-              <div class="list-row-main">
-                <span class="icon-badge" style="background: #e9a23b30;">🪙</span>
-                <span class="list-row-title">{{ dividendTitle(t) }}</span>
-                <div class="list-row-sub">每股 {{ t.dividend.perShare }} × {{ t.dividend.shares }} 股</div>
-              </div>
-              <div class="list-row-amount positive">+{{ dividendAmount(t) }}</div>
-            </div>
+            <DividendRowItem v-for="t in selectedDayDividends" :key="t.id" :dividend="t" @edit="openDividend(t.id)" @remove="removeDividend" />
           </div>
           <div v-if="twInvestments.length" class="subsection">
             <div class="subsection-header">
