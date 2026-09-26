@@ -36,6 +36,11 @@
   let token = null;
   let expiresAt = 0;
   let inflight = null;
+  // Set when a quiet (no-click) sign-in fails. On a phone the browser blocks that
+  // popup, so every later write or refresh would try — and fail — again, flashing
+  // a sign-in window each time. Until the operator signs in with a tap, requests
+  // fail at once instead.
+  let authBlocked = false;
 
   function loadGis() {
     if (window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
@@ -101,6 +106,7 @@
           token = resp.access_token;
           expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
           saveToken();
+          authBlocked = false;
           store.set(REMEMBER_KEY, '1');
           done(resolve, token);
         } else {
@@ -124,7 +130,13 @@
 
   async function getToken() {
     if (token && Date.now() < expiresAt - 60000) return token;
-    return trySilent();
+    if (authBlocked) throw authError('登入已過期,請按「重新登入」');
+    try {
+      return await trySilent();
+    } catch (err) {
+      authBlocked = true;
+      throw err;
+    }
   }
 
   function signOut() {

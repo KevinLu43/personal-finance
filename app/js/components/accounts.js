@@ -415,7 +415,7 @@ const AccountsView = {
     // sortOrder compared against each other and reusing 0..n-1 per section
     // is safe.
     async persistOrder(listId, items) {
-      await Promise.all(items.map((a, i) => Store.updateAccount(a.id, { sortOrder: i })));
+      await Promise.all(items.map((a, i) => (a.sortOrder === i ? null : Store.updateAccount(a.id, { sortOrder: i }))));
     },
     async exportBackup() {
       const backup = Store.exportBackupData();

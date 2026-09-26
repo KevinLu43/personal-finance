@@ -79,7 +79,7 @@ const CategoriesView = {
     // 0..n-1 never touches another list's order.
     async persistOrder(listId, items) {
       const update = listId === 'labels' ? Store.updateLabel : Store.updateCategory;
-      await Promise.all(items.map((item, i) => update(item.id, { sortOrder: i })));
+      await Promise.all(items.map((item, i) => (item.sortOrder === i ? null : update(item.id, { sortOrder: i }))));
     },
 
     // --- Labels: a separate management block, not a Category kind. Labels

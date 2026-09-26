@@ -56,6 +56,7 @@ const DragSortMixin = {
       event.preventDefault();
       this.dragListId = listId;
       this.dragItems = items.slice();
+      this._dragStartIds = items.map((it) => it.id); // to tell a real re-order from a mere tap
       this.dragId = items[index].id;
       this.dragFromIndex = index;
       this.dragOverIndex = index;
@@ -143,7 +144,10 @@ const DragSortMixin = {
       // handler and the window's both fire) can't save the order twice.
       this.dragFromIndex = null;
       try {
-        await this.persistOrder(listId, items);
+        // Pressing the handle without moving (or dropping it back where it was)
+        // changes nothing, so nothing is written — a write means a sync to Google.
+        const changed = items.some((it, i) => it.id !== this._dragStartIds[i]);
+        if (changed) await this.persistOrder(listId, items);
       } finally {
         // Even if saving failed the list must not stay frozen in its preview.
         this.dragListId = null;
