@@ -1081,3 +1081,18 @@ button.primary {
   .ticker-fix-row select, .ticker-fix-row input,
   .rate-row input { font-size: 16px; }
 }
+
+/* First-run guide, and the links beside it. */
+.text-link { color: var(--accent); font-size: 13px; margin-left: 12px; }
+.login-links { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 18px 0 0; font-size: 13px; }
+.login-links a { color: var(--muted); }
+.guide { max-width: 420px; }
+.guide-dots { display: flex; justify-content: center; gap: 6px; padding: 16px 0 0; }
+.guide-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.guide-dot.on { background: var(--accent); }
+.guide-icon { font-size: 40px; text-align: center; margin: 6px 0 2px; }
+.guide-title { text-align: center; margin: 4px 0 14px; }
+.guide-points { padding-left: 20px; margin: 0; font-size: 14px; line-height: 1.7; color: var(--ink); }
+.guide-points li { margin-bottom: 8px; }
+.guide-links { display: flex; justify-content: center; gap: 16px; margin: 14px 0 0; font-size: 13px; }
+.guide-links a { color: var(--accent); }

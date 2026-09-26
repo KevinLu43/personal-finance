@@ -151,6 +151,7 @@ const AccountsView = {
   },
   computed: {
     sync() { return window.SyncInfo; },
+    feedbackUrl() { return (window.APP_CONFIG && window.APP_CONFIG.feedbackUrl) || ''; },
     accounts() {
       return Store.state.accounts.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     },
@@ -250,6 +251,7 @@ const AccountsView = {
     },
   },
   methods: {
+    openGuide() { window.Guide.open = true; },
     openSheet() { window.open(this.sync.sheetUrl, '_blank', 'noopener'); },
     // The still-pledged stocks of one loan, oldest first.
     pledgesOf(loanId) {
@@ -556,6 +558,13 @@ const AccountsView = {
           </div>
         </div>
         <div v-if="loanAccounts.length === 0" class="empty">還沒有借款</div>
+      </section>
+
+      <section class="panel span-2">
+        <h3>使用說明</h3>
+        <button @click="openGuide">查看新手引導</button>
+        <a class="text-link" href="privacy.html" target="_blank" rel="noopener">隱私權說明</a>
+        <a v-if="feedbackUrl" class="text-link" :href="feedbackUrl" target="_blank" rel="noopener">意見回饋</a>
       </section>
 
       <section v-if="sync.mode === 'google'" class="panel span-2">

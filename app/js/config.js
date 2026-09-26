@@ -6,4 +6,6 @@
 window.APP_CONFIG = {
   googleClientId: '1062394265119-e5f0okbuaeu5ilvi04l2uh5kcv79j98t.apps.googleusercontent.com',
   spreadsheetName: '個人財務資料',
+  // Where testers send comments (a Google Form link, say). Empty hides the link.
+  feedbackUrl: '',
 };

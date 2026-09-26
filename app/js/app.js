@@ -23,6 +23,9 @@ const RootApp = {
     ready() {
       return this.phase === 'ready' && Store.state.ready;
     },
+    guideOpen() {
+      return window.Guide.open;
+    },
     syncLabel() {
       if (this.syncState === 'syncing') return '同步中…';
       if (this.syncState === 'error') return this.syncNeedsAuth ? '登入已過期' : '同步失敗';
@@ -43,6 +46,7 @@ const RootApp = {
       this.mode = 'local';
       await Store.init();
       this.phase = 'ready';
+      maybeShowGuide();
       return;
     }
     this.mode = 'google';
@@ -59,6 +63,9 @@ const RootApp = {
     else this.phase = 'login';
   },
   methods: {
+    closeGuide() {
+      window.Guide.open = false;
+    },
     // interactive = true comes straight from the login button's click, so the
     // browser lets Google's popup open; false is the quiet re-connect on load.
     async connectGoogle(interactive) {
@@ -87,6 +94,7 @@ const RootApp = {
         SyncInfo.sheetUrl = this.sheetUrl;
         this.lastRefresh = Date.now();
         this.phase = 'ready';
+        maybeShowGuide();
       } catch (err) {
         this.phase = 'login';
         // A quiet attempt that simply needs the operator to click isn't an error.
@@ -144,18 +152,24 @@ const RootApp = {
     InvestmentOverviewView,
     AccountsView,
     CategoriesView,
+    WelcomeGuide,
   },
   template: `
     <div v-if="phase === 'login'" class="login-screen">
       <div class="login-card">
         <div class="login-title">個人財務</div>
-        <p class="login-note">資料存放在你自己的 Google 試算表,登入後即可在任何裝置使用。</p>
+        <p class="login-note">資料存放在你自己的 Google 試算表,開發者看不到,登入後即可在任何裝置使用。</p>
         <button class="primary login-btn" @click="connectGoogle(true)">使用 Google 登入</button>
         <p v-if="loginError" class="login-error">{{ loginError }}</p>
+        <p class="login-links">
+          <a href="privacy.html" target="_blank" rel="noopener">隱私權說明</a>
+          <a href="?local=1">先不登入,本機試玩</a>
+        </p>
       </div>
     </div>
     <div v-else-if="!ready" class="loading">{{ phase === 'connecting' ? '連線到 Google 試算表…' : '載入中…' }}</div>
     <div v-else class="app-shell">
+      <WelcomeGuide v-if="guideOpen" @close="closeGuide" />
       <main class="app-main">
         <div v-if="mode === 'google'" class="sync-status" :class="syncState" :title="syncMessage">
           <template v-if="syncState === 'error'">

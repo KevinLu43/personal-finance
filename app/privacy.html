@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>隱私權說明</title>
+  <meta name="theme-color" content="#3d5a80" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <style>
+    :root { --bg: #f7f5f2; --surface: #fff; --ink: #2b2b2b; --muted: #6f6f6f; --line: #e6e2db; --accent: #3d5a80; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.75;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+    h1 { font-size: 24px; margin: 8px 0 4px; }
+    h2 { font-size: 17px; margin: 28px 0 8px; }
+    p, li { font-size: 15px; }
+    ul { padding-left: 20px; margin: 8px 0; }
+    li { margin: 4px 0; }
+    .meta { color: var(--muted); font-size: 13px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px 18px 18px; margin-top: 16px; }
+    .summary { background: #eef3f8; border-radius: 12px; padding: 14px 18px; margin-top: 16px; }
+    .summary strong { color: var(--accent); }
+    a { color: var(--accent); }
+    code { background: #f0ede8; padding: 1px 6px; border-radius: 4px; font-size: 13px; word-break: break-all; }
+    .back { display: inline-block; margin-bottom: 4px; font-size: 14px; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="./">← 回到個人財務</a>
+    <h1>隱私權說明</h1>
+    <div class="meta">最後更新:2026 年 9 月 27 日</div>
+
+    <div class="summary">
+      <strong>一句話:</strong>你記的每一筆資料都只存在<strong>你自己的 Google 雲端硬碟</strong>裡,開發者看不到,也沒有任何伺服器、統計或廣告追蹤程式。
+    </div>
+
+    <div class="card">
+      <h2>這是什麼</h2>
+      <p>「個人財務」是一個個人記帳與投資紀錄的網頁工具,是個人自行開發的小專案,提供朋友試用。它沒有後端伺服器,所有功能都在你的瀏覽器裡執行。</p>
+
+      <h2>我們處理哪些資料</h2>
+      <ul>
+        <li>你自己輸入的內容:帳戶與餘額、收支紀錄、分類與標籤、投資買賣與股利、固定支出、借款、匯率設定。</li>
+        <li>登入時由 Google 提供的授權憑證(存取權杖),用來讓網頁代你讀寫你的試算表。</li>
+      </ul>
+      <p>我們<strong>不會</strong>取得你的 Google 帳號密碼、電子郵件、姓名或聯絡人。</p>
+
+      <h2>資料存在哪裡</h2>
+      <ul>
+        <li><strong>Google 模式(登入後)</strong>:資料寫在你 Google 雲端硬碟裡一份名為「個人財務資料」的試算表,由網頁在你的瀏覽器中直接與 Google 溝通。這份試算表屬於你,你可以隨時開啟、下載或刪除。</li>
+        <li><strong>本機試玩模式(網址加 <code>?local=1</code>)</strong>:資料只存在你目前使用的這個瀏覽器,不會上傳到任何地方;清除瀏覽器資料就會消失。</li>
+        <li><strong>你的裝置上的暫存</strong>:瀏覽器會暫存登入憑證(約一小時有效),以及尚未成功送出的修改,以便網路恢復後補送。這些只存在你的裝置,不會傳給開發者。</li>
+      </ul>
+
+      <h2>要求哪些 Google 權限</h2>
+      <p>只要求一個權限:<code>drive.file</code>,意思是「只能存取由這個網頁自己建立的檔案」。網頁<strong>看不到</strong>你雲端硬碟裡的其他檔案或資料夾。</p>
+
+      <h2>開發者看得到你的資料嗎</h2>
+      <p>看不到。你的紀錄從你的瀏覽器直接送到你的 Google 試算表,不經過開發者的任何伺服器,開發者也沒有你的試算表的存取權,除非你自己把試算表分享出去。</p>
+
+      <h2>使用到的第三方服務</h2>
+      <ul>
+        <li><strong>Google</strong>:登入(Google Identity Services)與讀寫試算表(Google Sheets / Drive API),適用 <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google 隱私權政策</a>。</li>
+        <li><strong>unpkg.com</strong>:網頁載入 Vue 程式庫的來源。</li>
+        <li><strong>GitHub Pages</strong>:網站的代管服務。</li>
+      </ul>
+      <p>網頁沒有使用任何流量分析、廣告或追蹤工具。</p>
+
+      <h2>如何刪除或撤銷</h2>
+      <ul>
+        <li><strong>刪除資料</strong>:到你的 Google 雲端硬碟,刪除「個人財務資料」這份試算表即可。</li>
+        <li><strong>撤銷授權</strong>:網頁的「帳戶」頁按「登出 Google」,或到 <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google 帳戶的第三方存取權</a>移除這個應用程式。</li>
+        <li><strong>清除本機資料</strong>:清除瀏覽器對這個網站儲存的資料。</li>
+      </ul>
+
+      <h2>備份與免責</h2>
+      <p>建議你定期在「帳戶」頁匯出備份檔自行保存。這是個人自製的工具,以現況提供,不保證沒有錯誤,也不保證服務持續;請不要把它當成唯一的財務紀錄。</p>
+
+      <h2>聯絡</h2>
+      <p id="contact">有問題或想回報問題,請直接聯絡邀請你試用的人。</p>
+
+      <h2>異動</h2>
+      <p>如果這份說明有更新,會更新上方的日期。</p>
+    </div>
+  </main>
+  <script src="js/config.js"></script>
+  <script>
+    // The feedback link, when the owner has configured one in config.js.
+    (function () {
+      var url = window.APP_CONFIG && window.APP_CONFIG.feedbackUrl;
+      if (!url) return;
+      var el = document.getElementById('contact');
+      el.textContent = '有問題或想回報問題,請使用';
+      var a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = '意見回饋表單';
+      el.appendChild(a);
+      el.appendChild(document.createTextNode('。'));
+    })();
+  </script>
+</body>
+</html>
