@@ -16,6 +16,28 @@
 // (a release anywhere still ends it and saves the order) and takes the
 // capture back whenever it is lost while the pointer is still down. The
 // handlers a list puts on the handle stay harmless: both are idempotent.
+// Auto-scroll while dragging: within EDGE_ZONE px of the top of the screen (or
+// of the bottom, above the phone's tab bar) the page scrolls, faster the closer
+// to the edge, so a row can be carried past what fits on screen.
+const EDGE_ZONE = 70;
+const EDGE_MAX_SPEED = 16; // px per frame, at the very edge
+
+// How much of the screen's bottom the tab bar covers (0 on desktop, where it is
+// a sidebar and not a bar along the bottom).
+function bottomBarHeight() {
+  const bar = document.querySelector('.tab-bar');
+  if (!bar) return 0;
+  const r = bar.getBoundingClientRect();
+  return r.width > window.innerWidth * 0.6 && r.top > window.innerHeight / 2 ? window.innerHeight - r.top : 0;
+}
+
+function edgeScrollSpeed(y) {
+  const bottomEdge = window.innerHeight - bottomBarHeight() - EDGE_ZONE;
+  if (y < EDGE_ZONE) return -Math.ceil(EDGE_MAX_SPEED * Math.min(1, (EDGE_ZONE - y) / EDGE_ZONE));
+  if (y > bottomEdge) return Math.ceil(EDGE_MAX_SPEED * Math.min(1, (y - bottomEdge) / EDGE_ZONE));
+  return 0;
+}
+
 const DragSortMixin = {
   data() {
     return {
@@ -55,8 +77,35 @@ const DragSortMixin = {
       window.addEventListener('pointerup', onUp);
       window.addEventListener('pointercancel', onUp);
       this._dragListeners = { handle, takeCapture, onMove, onUp };
+      this._dragPointer = { x: event.clientX, y: event.clientY };
+      // Browsers keep the page from visibly jumping when content moves ("scroll
+      // anchoring"); each re-order here would then cancel part of an upward
+      // auto-scroll. Off for the length of the drag.
+      document.documentElement.style.overflowAnchor = 'none';
+      this.startAutoScroll();
+    },
+    // Ticks (~60 a second) while a drag is on. The pointer may be held still
+    // at the edge (no move events), so it scrolls from the last known
+    // position, then re-checks which row is now under it. A plain timer, not
+    // requestAnimationFrame: it needs nothing painted to keep going.
+    startAutoScroll() {
+      const step = () => {
+        if (this.dragFromIndex === null) { this._scrollTimer = null; return; }
+        const p = this._dragPointer;
+        const dy = p ? edgeScrollSpeed(p.y) : 0;
+        if (dy !== 0) {
+          const before = window.scrollY;
+          window.scrollBy(0, dy);
+          if (window.scrollY !== before) this.onDragMove({ clientX: p.x, clientY: p.y });
+        }
+        this._scrollTimer = setTimeout(step, 16);
+      };
+      this._scrollTimer = setTimeout(step, 16);
     },
     endDragListeners() {
+      clearTimeout(this._scrollTimer);
+      this._scrollTimer = null;
+      document.documentElement.style.overflowAnchor = '';
       const l = this._dragListeners;
       if (!l) return;
       l.handle.removeEventListener('lostpointercapture', l.takeCapture);
@@ -67,7 +116,11 @@ const DragSortMixin = {
     },
     onDragMove(event) {
       if (this.dragFromIndex === null) return;
-      const el = document.elementFromPoint(event.clientX, event.clientY);
+      this._dragPointer = { x: event.clientX, y: event.clientY };
+      // A finger held at the very edge, or on the tab bar, is over no row: look
+      // at the nearest point of the visible page instead so the row keeps following.
+      const hitY = Math.min(Math.max(event.clientY, 1), window.innerHeight - bottomBarHeight() - 1);
+      const el = document.elementFromPoint(event.clientX, hitY);
       const rowEl = el ? el.closest('[data-drag-row]') : null;
       if (!rowEl || rowEl.dataset.dragList !== this.dragListId) return;
       const overIndex = Number(rowEl.dataset.dragRow);
