@@ -1065,3 +1065,16 @@ button.primary {
 .dividend-add { padding: 4px 0 8px 28px; }
 .dividend-add button { font-size: 12px; }
 .header-actions { display: inline-flex; gap: 8px; }
+
+/* iOS Safari zooms the whole page when a text field under 16px is focused, and
+   leaves it zoomed after the dialog closes. On phones/touch screens every
+   form control is therefore 16px (listed by selector because several rules
+   above set their own 14px). Desktop keeps the denser sizes. */
+@media (max-width: 767px), (pointer: coarse) {
+  input, select, textarea,
+  .modal input, .modal select,
+  .period-select select,
+  .search-field,
+  .ticker-fix-row select, .ticker-fix-row input,
+  .rate-row input { font-size: 16px; }
+}
