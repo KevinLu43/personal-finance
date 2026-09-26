@@ -189,7 +189,7 @@ const RecurringFormModal = {
             </select>
           </label>
           <label>備註 <input v-model="form.note" /></label>
-          <label>標籤
+          <div class="field-group">標籤
             <div class="chip-row">
               <span
                 v-for="l in labels" :key="l.id"
@@ -202,7 +202,7 @@ const RecurringFormModal = {
               <input v-model="newLabelInput" placeholder="新增標籤" @keyup.enter.prevent="addNewLabelToForm" />
               <button type="button" @click="addNewLabelToForm">加入</button>
             </div>
-          </label>
+          </div>
         </div>
         <div class="modal-actions" :class="{ 'with-delete': !isNew }">
           <button v-if="!isNew" class="danger" @click="removeCurrent">刪除</button>
