@@ -4,23 +4,25 @@
 // touch on iOS Safari, which is the primary device this app targets.
 //
 // A list opts in by rendering a drag handle that calls startDrag on
-// pointerdown and forwards pointermove/pointerup to onDragMove/onDragEnd,
-// gives each row a `data-drag-list`/`data-drag-row` pair so the handle can
-// hit-test which row it's hovering over, renders `displayList(listId, base)`
-// instead of the raw array, and implements `persistOrder(listId, items)` to
-// write the new order back through the Store.
+// pointerdown, gives each row `data-drag-list` and `data-drag-id`, adds
+// `dragMark(listId, id)` to the row's classes (the drop indicator), and
+// implements `persistOrder(listId, items)` to write the new order back through
+// the Store.
 //
-// Re-ordering re-renders the rows, which moves the dragged handle's DOM node,
-// and the browser then drops the handle's pointer capture — after which its
-// pointermove/pointerup never arrive. So the drag also listens on `window`
-// (a release anywhere still ends it and saves the order) and takes the
-// capture back whenever it is lost while the pointer is still down. The
-// handlers a list puts on the handle stay harmless: both are idempotent.
-// Auto-scroll while dragging: within EDGE_ZONE px of the top of the screen (or
-// of the bottom, above the phone's tab bar) the page scrolls, faster the closer
-// to the edge, so a row can be carried past what fits on screen.
+// Design rule: nothing in the DOM moves while a drag is on. The rows stay where
+// they are, a line marks where the dragged row would land, and the list is
+// re-ordered once, on release. An earlier version re-ordered the rows live,
+// which moved the dragged handle's DOM node; the browser then dropped the
+// handle's pointer capture (the drag froze) and the workaround of re-taking
+// the capture crashed iPhone Safari's page process. So there is no pointer
+// capture at all: the drag listens on `window`, and touch pointers are already
+// delivered to the element they started on and bubble up to it.
+//
+// Auto-scroll: once the pointer has moved, within EDGE_ZONE px of the top of the
+// screen (or of the bottom, above the phone's tab bar) the page scrolls, faster
+// the closer to the edge, so a row can be carried past what fits on screen.
 const EDGE_ZONE = 70;
-const EDGE_MAX_SPEED = 16; // px per frame, at the very edge
+const EDGE_MAX_SPEED = 16; // px per tick, at the very edge
 
 // How much of the screen's bottom the tab bar covers (0 on desktop, where it is
 // a sidebar and not a bar along the bottom).
@@ -31,8 +33,8 @@ function bottomBarHeight() {
   return r.width > window.innerWidth * 0.6 && r.top > window.innerHeight / 2 ? window.innerHeight - r.top : 0;
 }
 
-function edgeScrollSpeed(y) {
-  const bottomEdge = window.innerHeight - bottomBarHeight() - EDGE_ZONE;
+function edgeScrollSpeed(y, barHeight) {
+  const bottomEdge = window.innerHeight - barHeight - EDGE_ZONE;
   if (y < EDGE_ZONE) return -Math.ceil(EDGE_MAX_SPEED * Math.min(1, (EDGE_ZONE - y) / EDGE_ZONE));
   if (y > bottomEdge) return Math.ceil(EDGE_MAX_SPEED * Math.min(1, (y - bottomEdge) / EDGE_ZONE));
   return 0;
@@ -42,10 +44,10 @@ const DragSortMixin = {
   data() {
     return {
       dragListId: null,
-      dragItems: null,
+      dragItems: null, // the list as it was when the drag began; never re-ordered mid-drag
       dragId: null,
       dragFromIndex: null,
-      dragOverIndex: null,
+      dragOverIndex: null, // where the dragged row would land
     };
   },
   beforeUnmount() {
@@ -54,46 +56,32 @@ const DragSortMixin = {
   methods: {
     startDrag(listId, items, index, event) {
       event.preventDefault();
+      this.endDragListeners(); // never leave a previous drag's listeners behind
       this.dragListId = listId;
       this.dragItems = items.slice();
-      this._dragStartIds = items.map((it) => it.id); // to tell a real re-order from a mere tap
       this.dragId = items[index].id;
       this.dragFromIndex = index;
       this.dragOverIndex = index;
 
-      this.endDragListeners(); // never leave a previous drag's listeners behind
-      const handle = event.currentTarget;
       const pointerId = event.pointerId;
-      const takeCapture = () => {
-        if (this.dragFromIndex === null || !handle.isConnected) return;
-        try {
-          if (!handle.hasPointerCapture(pointerId)) handle.setPointerCapture(pointerId);
-        } catch (err) { /* the pointer is already gone */ }
-      };
       const onMove = (e) => { if (e.pointerId === pointerId) this.onDragMove(e); };
       const onUp = (e) => { if (e.pointerId === pointerId) this.onDragEnd(); };
-      takeCapture();
-      handle.addEventListener('lostpointercapture', takeCapture);
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
       window.addEventListener('pointercancel', onUp);
-      this._dragListeners = { handle, takeCapture, onMove, onUp };
-      this._dragPointer = { x: event.clientX, y: event.clientY };
-      // Browsers keep the page from visibly jumping when content moves ("scroll
-      // anchoring"); each re-order here would then cancel part of an upward
-      // auto-scroll. Off for the length of the drag.
-      document.documentElement.style.overflowAnchor = 'none';
-      this.startAutoScroll();
+      this._dragListeners = { onMove, onUp };
+      this._dragPointer = null; // set by the first move: a mere press never scrolls
+      this._dragBarHeight = bottomBarHeight();
     },
-    // Ticks (~60 a second) while a drag is on. The pointer may be held still
-    // at the edge (no move events), so it scrolls from the last known
-    // position, then re-checks which row is now under it. A plain timer, not
-    // requestAnimationFrame: it needs nothing painted to keep going.
+    // Ticks (~60 a second) once the pointer has moved. It may then be held still
+    // at the edge (no move events), so it scrolls from the last known position and
+    // re-checks which row is under it. A plain timer, not requestAnimationFrame:
+    // it needs nothing painted to keep going.
     startAutoScroll() {
       const step = () => {
         if (this.dragFromIndex === null) { this._scrollTimer = null; return; }
         const p = this._dragPointer;
-        const dy = p ? edgeScrollSpeed(p.y) : 0;
+        const dy = p ? edgeScrollSpeed(p.y, this._dragBarHeight) : 0;
         if (dy !== 0) {
           const before = window.scrollY;
           window.scrollBy(0, dy);
@@ -106,10 +94,8 @@ const DragSortMixin = {
     endDragListeners() {
       clearTimeout(this._scrollTimer);
       this._scrollTimer = null;
-      document.documentElement.style.overflowAnchor = '';
       const l = this._dragListeners;
       if (!l) return;
-      l.handle.removeEventListener('lostpointercapture', l.takeCapture);
       window.removeEventListener('pointermove', l.onMove);
       window.removeEventListener('pointerup', l.onUp);
       window.removeEventListener('pointercancel', l.onUp);
@@ -118,46 +104,56 @@ const DragSortMixin = {
     onDragMove(event) {
       if (this.dragFromIndex === null) return;
       this._dragPointer = { x: event.clientX, y: event.clientY };
+      if (this._scrollTimer == null) this.startAutoScroll();
       // A finger held at the very edge, or on the tab bar, is over no row: look
-      // at the nearest point of the visible page instead so the row keeps following.
-      const hitY = Math.min(Math.max(event.clientY, 1), window.innerHeight - bottomBarHeight() - 1);
+      // at the nearest point of the visible page instead so the marker keeps following.
+      const hitY = Math.min(Math.max(event.clientY, 1), window.innerHeight - this._dragBarHeight - 1);
       const el = document.elementFromPoint(event.clientX, hitY);
-      const rowEl = el ? el.closest('[data-drag-row]') : null;
+      const rowEl = el ? el.closest('[data-drag-id]') : null;
       if (!rowEl || rowEl.dataset.dragList !== this.dragListId) return;
-      const overIndex = Number(rowEl.dataset.dragRow);
-      if (Number.isNaN(overIndex) || overIndex === this.dragOverIndex) return;
-      const items = this.dragItems.slice();
-      const [moved] = items.splice(this.dragOverIndex, 1);
-      items.splice(overIndex, 0, moved);
-      this.dragItems = items;
+      const overIndex = this.dragItems.findIndex((it) => it.id === rowEl.dataset.dragId);
+      if (overIndex === -1 || overIndex === this.dragOverIndex) return;
       this.dragOverIndex = overIndex;
     },
-    // Persist before clearing the live-preview array, so the list never
-    // snaps back to the pre-drag order for the moment it takes the Store
-    // write to land.
+    // Re-orders once, here. Pressing the handle without moving (or dropping the
+    // row where it started) changes nothing, so nothing is written — a write is
+    // a sync to Google.
     async onDragEnd() {
       if (this.dragFromIndex === null) return;
       this.endDragListeners();
       const listId = this.dragListId;
-      const items = this.dragItems;
+      const from = this.dragFromIndex;
+      const to = this.dragOverIndex;
+      const base = this.dragItems;
       // Marked over straight away, so a second release event (the handle's own
       // handler and the window's both fire) can't save the order twice.
       this.dragFromIndex = null;
       try {
-        // Pressing the handle without moving (or dropping it back where it was)
-        // changes nothing, so nothing is written — a write means a sync to Google.
-        const changed = items.some((it, i) => it.id !== this._dragStartIds[i]);
-        if (changed) await this.persistOrder(listId, items);
+        if (to !== from) {
+          const items = base.slice();
+          const [moved] = items.splice(from, 1);
+          items.splice(to, 0, moved);
+          await this.persistOrder(listId, items);
+        }
       } finally {
-        // Even if saving failed the list must not stay frozen in its preview.
+        // Even if saving failed the list must not stay marked as mid-drag.
         this.dragListId = null;
         this.dragItems = null;
         this.dragId = null;
         this.dragOverIndex = null;
       }
     },
+    // The drop indicator: a line above the target row when dragging up, below it
+    // when dragging down. Add the result to the row's classes.
+    dragMark(listId, id) {
+      if (this.dragFromIndex === null || this.dragListId !== listId || this.dragOverIndex === this.dragFromIndex) return '';
+      const idx = this.dragItems.findIndex((it) => it.id === id);
+      if (idx !== this.dragOverIndex) return '';
+      return this.dragOverIndex < this.dragFromIndex ? 'drag-before' : 'drag-after';
+    },
+    // Rows are never re-ordered mid-drag, so a list always renders its own order.
     displayList(listId, baseItems) {
-      return this.dragListId === listId ? this.dragItems : baseItems;
+      return baseItems;
     },
   },
 };

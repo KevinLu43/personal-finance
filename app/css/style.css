@@ -501,6 +501,10 @@ body {
   cursor: grab;
   touch-action: none;
   user-select: none;
+  /* iOS: a long press on the handle would otherwise select its glyph / open the
+     callout instead of starting the drag. */
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .drag-handle:active { cursor: grabbing; }
 .default-star {
@@ -1096,3 +1100,8 @@ button.primary {
 .guide-points li { margin-bottom: 8px; }
 .guide-links { display: flex; justify-content: center; gap: 16px; margin: 14px 0 0; font-size: 13px; }
 .guide-links a { color: var(--accent); }
+
+/* Drop indicator while dragging a row (nothing moves; a line marks the landing spot).
+   A box-shadow, so it changes no layout. */
+.list-row.drag-before { box-shadow: 0 -3px 0 var(--accent); }
+.list-row.drag-after { box-shadow: 0 3px 0 var(--accent); }

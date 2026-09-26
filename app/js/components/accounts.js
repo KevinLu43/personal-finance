@@ -1,5 +1,5 @@
 const AccountRowItem = {
-  props: ['account', 'listId', 'index', 'dragging'],
+  props: ['account', 'listId', 'index', 'dragging', 'dragMark'],
   emits: ['edit', 'toggle-archive', 'delete', 'toggle-default', 'handle-down', 'handle-move', 'handle-up', 'pledge'],
   computed: {
     isCredit() {
@@ -83,7 +83,7 @@ const AccountRowItem = {
     },
   },
   template: `
-    <div class="list-row" :class="{ archived: account.isArchived, dragging }" :data-drag-list="listId" :data-drag-row="index">
+    <div class="list-row" :class="[{ archived: account.isArchived, dragging }, dragMark]" :data-drag-list="listId" :data-drag-id="account.id">
       <span class="drag-handle"
         @pointerdown="$emit('handle-down', $event)"
         @pointermove="$emit('handle-move', $event)"
@@ -498,7 +498,7 @@ const AccountsView = {
         <div class="view-header"><h3>現金</h3><button class="primary" @click="openNew('cash')">+ 新增</button></div>
         <AccountRowItem
           v-for="(a, i) in displayList('cash', cashAccounts)" :key="a.id"
-          :account="a" list-id="cash" :index="i" :dragging="dragId === a.id"
+          :account="a" list-id="cash" :index="i" :dragging="dragId === a.id" :drag-mark="dragMark('cash', a.id)"
           @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
           @handle-down="startDrag('cash', cashAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
         />
@@ -509,7 +509,7 @@ const AccountsView = {
         <div class="view-header"><h3>銀行</h3><button class="primary" @click="openNew('bank')">+ 新增</button></div>
         <AccountRowItem
           v-for="(a, i) in displayList('bank', bankAccounts)" :key="a.id"
-          :account="a" list-id="bank" :index="i" :dragging="dragId === a.id"
+          :account="a" list-id="bank" :index="i" :dragging="dragId === a.id" :drag-mark="dragMark('bank', a.id)"
           @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
           @handle-down="startDrag('bank', bankAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
         />
@@ -520,7 +520,7 @@ const AccountsView = {
         <div class="view-header"><h3>信用卡</h3><button class="primary" @click="openNew('credit_card')">+ 新增</button></div>
         <AccountRowItem
           v-for="(a, i) in displayList('credit_card', creditAccounts)" :key="a.id"
-          :account="a" list-id="credit_card" :index="i" :dragging="dragId === a.id"
+          :account="a" list-id="credit_card" :index="i" :dragging="dragId === a.id" :drag-mark="dragMark('credit_card', a.id)"
           @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
           @handle-down="startDrag('credit_card', creditAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
         />
@@ -531,7 +531,7 @@ const AccountsView = {
         <div class="view-header"><h3>證券交割</h3><button class="primary" @click="openNew('brokerage')">+ 新增</button></div>
         <AccountRowItem
           v-for="(a, i) in displayList('brokerage', brokerageAccounts)" :key="a.id"
-          :account="a" list-id="brokerage" :index="i" :dragging="dragId === a.id"
+          :account="a" list-id="brokerage" :index="i" :dragging="dragId === a.id" :drag-mark="dragMark('brokerage', a.id)"
           @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
           @handle-down="startDrag('brokerage', brokerageAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"
         />
@@ -543,7 +543,7 @@ const AccountsView = {
         <p class="muted" style="margin: -4px 0 10px;">質押借款的額度、利率、到期日、展延設在每檔質押股票上;其他借款設定分期數,每月自動記還款</p>
         <div v-for="(a, i) in displayList('loan', loanAccounts)" :key="a.id">
           <AccountRowItem
-            :account="a" list-id="loan" :index="i" :dragging="dragId === a.id"
+            :account="a" list-id="loan" :index="i" :dragging="dragId === a.id" :drag-mark="dragMark('loan', a.id)"
             @edit="openEdit" @toggle-archive="toggleArchive" @delete="deleteAccount" @toggle-default="toggleDefault"
             @pledge="pledgingLoanId = $event.id"
             @handle-down="startDrag('loan', loanAccounts, i, $event)" @handle-move="onDragMove" @handle-up="onDragEnd"

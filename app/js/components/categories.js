@@ -130,8 +130,8 @@ const CategoriesView = {
         <div class="view-header"><h3>支出分類</h3><button class="primary" @click="openNew('expense')">+ 新增</button></div>
         <div
           v-for="(c, i) in displayList('expense', expenseCategories)" :key="c.id"
-          class="list-row" :class="{ archived: c.isArchived, dragging: dragId === c.id }"
-          data-drag-list="expense" :data-drag-row="i"
+          class="list-row" :class="[{ archived: c.isArchived, dragging: dragId === c.id }, dragMark('expense', c.id)]"
+          data-drag-list="expense" :data-drag-id="c.id"
         >
           <span class="drag-handle"
             @pointerdown="startDrag('expense', expenseCategories, i, $event)"
@@ -154,8 +154,8 @@ const CategoriesView = {
         <div class="view-header"><h3>收入分類</h3><button class="primary" @click="openNew('income')">+ 新增</button></div>
         <div
           v-for="(c, i) in displayList('income', incomeCategories)" :key="c.id"
-          class="list-row" :class="{ archived: c.isArchived, dragging: dragId === c.id }"
-          data-drag-list="income" :data-drag-row="i"
+          class="list-row" :class="[{ archived: c.isArchived, dragging: dragId === c.id }, dragMark('income', c.id)]"
+          data-drag-list="income" :data-drag-id="c.id"
         >
           <span class="drag-handle"
             @pointerdown="startDrag('income', incomeCategories, i, $event)"
@@ -178,8 +178,8 @@ const CategoriesView = {
         <p class="muted" style="margin: -4px 0 10px;">記帳時可以多選</p>
         <div
           v-for="(l, i) in displayList('labels', labels)" :key="l.id"
-          class="list-row" :class="{ archived: l.isArchived, dragging: dragId === l.id }"
-          data-drag-list="labels" :data-drag-row="i"
+          class="list-row" :class="[{ archived: l.isArchived, dragging: dragId === l.id }, dragMark('labels', l.id)]"
+          data-drag-list="labels" :data-drag-id="l.id"
         >
           <span class="drag-handle"
             @pointerdown="startDrag('labels', labels, i, $event)"
