@@ -43,15 +43,12 @@ const TransactionRowItem = {
   },
   template: `
     <div class="list-row clickable" @click="$emit('edit', transaction)">
+      <!-- The icon sits beside the text block, not inside it: inside, it took a
+           whole line to itself and pushed the title underneath it. -->
+      <span v-if="transaction.type === 'transfer'" class="icon-badge" style="background: #adb5bd30;">🔁</span>
+      <span v-else class="icon-badge" :style="{ background: (category?.color || '#adb5bd') + '30' }">{{ category?.icon || '❔' }}</span>
       <div class="list-row-main">
-        <template v-if="transaction.type === 'transfer'">
-          <span class="bar-icon">🔁</span>
-          <span class="list-row-title">{{ accountName }} → {{ toAccountName }}</span>
-        </template>
-        <template v-else>
-          <span class="icon-badge" :style="{ background: (category?.color || '#adb5bd') + '30' }">{{ category?.icon || '❔' }}</span>
-          <span class="list-row-title">{{ transaction.note || category?.name || '(未分類)' }}</span>
-        </template>
+        <span class="list-row-title">{{ transaction.type === 'transfer' ? accountName + ' → ' + toAccountName : (transaction.note || category?.name || '(未分類)') }}</span>
         <div class="list-row-sub">
           {{ accountName }}
           <span v-if="labelNames.length"> · {{ labelNames.join(', ') }}</span>

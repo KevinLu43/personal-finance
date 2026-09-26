@@ -137,8 +137,8 @@ const CategoriesView = {
             @pointerdown="startDrag('expense', expenseCategories, i, $event)"
             @pointermove="onDragMove" @pointerup="onDragEnd" @pointercancel="onDragEnd"
           >⠿</span>
+          <span class="icon-badge" :style="{ background: (c.color || '#adb5bd') + '30' }">{{ c.icon }}</span>
           <div class="list-row-main">
-            <span class="icon-badge" :style="{ background: (c.color || '#adb5bd') + '30' }">{{ c.icon }}</span>
             <span class="list-row-title">{{ c.name }}</span>
             <div v-if="c.budgetLimit" class="list-row-sub">預算 {{ c.budgetLimit.toLocaleString('zh-TW') }} / 月</div>
           </div>
@@ -161,8 +161,8 @@ const CategoriesView = {
             @pointerdown="startDrag('income', incomeCategories, i, $event)"
             @pointermove="onDragMove" @pointerup="onDragEnd" @pointercancel="onDragEnd"
           >⠿</span>
+          <span class="icon-badge" :style="{ background: (c.color || '#adb5bd') + '30' }">{{ c.icon }}</span>
           <div class="list-row-main">
-            <span class="icon-badge" :style="{ background: (c.color || '#adb5bd') + '30' }">{{ c.icon }}</span>
             <span class="list-row-title">{{ c.name }}</span>
           </div>
           <div class="list-row-actions">
@@ -185,8 +185,8 @@ const CategoriesView = {
             @pointerdown="startDrag('labels', labels, i, $event)"
             @pointermove="onDragMove" @pointerup="onDragEnd" @pointercancel="onDragEnd"
           >⠿</span>
+          <span class="icon-badge" :style="{ background: (l.color || '#6d6875') + '30' }">{{ l.icon || '🏷️' }}</span>
           <div class="list-row-main">
-            <span class="icon-badge" :style="{ background: (l.color || '#6d6875') + '30' }">{{ l.icon || '🏷️' }}</span>
             <span class="list-row-title">{{ l.name }}</span>
           </div>
           <div class="list-row-actions">
