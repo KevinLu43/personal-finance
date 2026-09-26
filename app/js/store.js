@@ -179,6 +179,14 @@ async function reloadFromDb() {
   await bookDueItems();
 }
 
+// True when applying `fields` to `record` would change nothing. Every write is
+// also a sync to Google, so a save with no edits (or a re-order that leaves rows
+// where they were) must not be written: the update helpers below skip it.
+// undefined and null count as the same "empty".
+function isNoChange(record, fields) {
+  return Object.keys(fields).every((k) => JSON.stringify(record[k] ?? null) === JSON.stringify(fields[k] ?? null));
+}
+
 // --- Accounts ---
 
 async function addAccount(fields) {
@@ -191,6 +199,7 @@ async function addAccount(fields) {
 async function updateAccount(id, fields) {
   const idx = state.accounts.findIndex((a) => a.id === id);
   if (idx === -1) return;
+  if (isNoChange(state.accounts[idx], fields)) return;
   const updated = { ...state.accounts[idx], ...fields, updatedAt: Models.nowIso() };
   await Db.put('accounts', updated);
   state.accounts[idx] = updated;
@@ -443,6 +452,7 @@ async function addPledge(fields) {
 async function updatePledge(id, fields) {
   const idx = state.pledges.findIndex((p) => p.id === id);
   if (idx === -1) return;
+  if (isNoChange(state.pledges[idx], fields)) return;
   const updated = { ...state.pledges[idx], ...fields, updatedAt: Models.nowIso() };
   await Db.put('pledges', updated);
   state.pledges[idx] = updated;
@@ -519,6 +529,7 @@ async function addCategory(fields) {
 async function updateCategory(id, fields) {
   const idx = state.categories.findIndex((c) => c.id === id);
   if (idx === -1) return;
+  if (isNoChange(state.categories[idx], fields)) return;
   const updated = { ...state.categories[idx], ...fields, updatedAt: Models.nowIso() };
   await Db.put('categories', updated);
   state.categories[idx] = updated;
@@ -553,6 +564,7 @@ async function findOrCreateLabel(name, color, icon) {
 async function updateLabel(id, fields) {
   const idx = state.labels.findIndex((l) => l.id === id);
   if (idx === -1) return;
+  if (isNoChange(state.labels[idx], fields)) return;
   const updated = { ...state.labels[idx], ...fields, updatedAt: Models.nowIso() };
   await Db.put('labels', updated);
   state.labels[idx] = updated;
@@ -601,9 +613,11 @@ async function updateTransaction(id, fields, labelNames = null) {
   // block would otherwise reach Db.put as a Vue reactive proxy, which
   // IndexedDB's structured clone rejects (a shallow spread only unwraps the top level).
   const current = JSON.parse(JSON.stringify(state.transactions[idx]));
-  const updated = { ...current, ...fields, updatedAt: Models.nowIso() };
-  await Db.put('transactions', updated);
-  state.transactions[idx] = updated;
+  if (!isNoChange(current, fields)) {
+    const updated = { ...current, ...fields, updatedAt: Models.nowIso() };
+    await Db.put('transactions', updated);
+    state.transactions[idx] = updated;
+  }
   if (labelNames !== null) await setTransactionLabels(id, labelNames);
 }
 
@@ -613,16 +627,29 @@ async function deleteTransaction(id) {
   await updateTransaction(id, { isDeleted: true });
 }
 
+// Brings a transaction's label links to exactly `labelNames`, touching only the
+// difference: links for labels still wanted are left alone, so saving an edit
+// that didn't touch the labels writes none of them (this used to delete and
+// re-add every link on every save).
 async function setTransactionLabels(transactionId, labelNames) {
-  const existingLinks = state.transactionLabels.filter((tl) => tl.transactionId === transactionId);
-  for (const link of existingLinks) {
-    await Db.remove('transactionLabels', link.id);
-  }
-  state.transactionLabels = state.transactionLabels.filter((tl) => tl.transactionId !== transactionId);
-
+  const wanted = [];
   for (const name of labelNames) {
     const label = await findOrCreateLabel(name);
-    if (!label) continue;
+    if (label && !wanted.some((l) => l.id === label.id)) wanted.push(label);
+  }
+  const wantedIds = new Set(wanted.map((l) => l.id));
+  const existingLinks = state.transactionLabels.filter((tl) => tl.transactionId === transactionId);
+  const existingIds = new Set(existingLinks.map((tl) => tl.labelId));
+
+  for (const link of existingLinks) {
+    if (!wantedIds.has(link.labelId)) await Db.remove('transactionLabels', link.id);
+  }
+  state.transactionLabels = state.transactionLabels.filter(
+    (tl) => tl.transactionId !== transactionId || wantedIds.has(tl.labelId)
+  );
+
+  for (const label of wanted) {
+    if (existingIds.has(label.id)) continue;
     const link = { id: `${transactionId}:${label.id}`, transactionId, labelId: label.id };
     await Db.put('transactionLabels', link);
     state.transactionLabels.push(link);
@@ -648,6 +675,7 @@ async function addInvestment(fields) {
 async function updateInvestment(id, fields) {
   const idx = state.investments.findIndex((i) => i.id === id);
   if (idx === -1) return;
+  if (isNoChange(state.investments[idx], fields)) return;
   const updated = { ...state.investments[idx], ...fields, updatedAt: Models.nowIso() };
   await Db.put('investments', updated);
   state.investments[idx] = updated;
@@ -676,6 +704,7 @@ async function addRecurring(fields) {
 async function updateRecurring(id, fields) {
   const idx = state.recurringTransactions.findIndex((r) => r.id === id);
   if (idx === -1) return;
+  if (isNoChange(state.recurringTransactions[idx], fields)) return;
   const updated = { ...state.recurringTransactions[idx], ...fields, updatedAt: Models.nowIso() };
   // recurringTransactions is the one store with an array field (labelNames)
   // directly on the record — spreading state.recurringTransactions[idx]
@@ -773,6 +802,7 @@ async function setExchangeRate(code, rate, effectiveDate) {
   const next = JSON.parse(JSON.stringify(state.rateHistory));
   const entries = next[code] || (next[code] = []);
   const idx = entries.findIndex((e) => e.date === date);
+  if (idx !== -1 && entries[idx].rate === value) return; // already exactly this
   if (idx !== -1) entries[idx] = { date, rate: value };
   else entries.push({ date, rate: value });
   entries.sort((a, b) => (a.date < b.date ? -1 : 1));
