@@ -143,6 +143,7 @@ const DashboardView = {
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
       expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
       trendPick: null, // index of the month picked on the trend chart, for the readout
+      fixedExpensePick: null, // year view: index of the month picked on 固定支出's chart, for the readout
       kpiCompareMode: 'prev', // month view only: 'prev' (較上月) | 'yoy' (較去年同月)
     };
   },
@@ -158,6 +159,7 @@ const DashboardView = {
     },
     year() {
       this.trendPick = null;
+      this.fixedExpensePick = null;
       this.expandedMonth = null;
       this.expandedDate = null;
     },
@@ -340,6 +342,26 @@ const DashboardView = {
     },
     recurringExpenseYearTotal() {
       return this.yearlyFixedExpenseMonths.reduce((sum, m) => sum + m.amount, 0);
+    },
+    // What 固定支出's chart reads out when a month is picked: that month's
+    // total plus its breakdown, split the same way the chart's own bars and
+    // legend are (top categories, then 其他, then 貸款) so the numbers under
+    // a bar always match the colors in it.
+    fixedExpenseReadout() {
+      const i = this.fixedExpensePick;
+      const m = i === null ? null : this.yearlyFixedExpenseMonths[i];
+      if (!m) return null;
+      const topKeys = new Set(this.fixedExpenseChart.series.filter((s) => s.key !== '__other__' && s.key !== '__loan__').map((s) => s.key));
+      const parts = this.fixedExpenseChart.series
+        .map((s) => {
+          let amount;
+          if (s.key === '__loan__') amount = m.loanAmount;
+          else if (s.key === '__other__') amount = [...m.byCategory.entries()].filter(([key]) => !topKeys.has(key)).reduce((sum, [, v]) => sum + v, 0);
+          else amount = m.byCategory.get(s.key) || 0;
+          return { key: s.key, name: s.name, color: s.color, amount };
+        })
+        .filter((p) => p.amount > 0);
+      return { label: `${this.year} 年 ${m.month} 月`, total: m.amount + m.loanAmount, parts };
     },
     loanPaymentYearTotal() {
       return this.yearlyFixedExpenseMonths.reduce((sum, m) => sum + m.loanAmount, 0);
@@ -638,6 +660,9 @@ const DashboardView = {
     pickTrend(i) {
       this.trendPick = this.trendPick === i ? null : i;
     },
+    pickFixedExpense(i) {
+      this.fixedExpensePick = this.fixedExpensePick === i ? null : i;
+    },
     diamondPoints(x, y) {
       return [x + ',' + (y - 3), (x + 2.5) + ',' + y, x + ',' + (y + 3), (x - 2.5) + ',' + y].join(' ');
     },
@@ -911,13 +936,23 @@ const DashboardView = {
             </span>
           </div>
         </div>
+        <div class="trend-readout" :class="{ empty: !fixedExpenseReadout }">
+          <template v-if="fixedExpenseReadout">
+            <strong>{{ fixedExpenseReadout.label }}</strong>
+            <span v-for="p in fixedExpenseReadout.parts" :key="p.key"><span class="legend-dot" :style="{ background: p.color }"></span>{{ p.name }} {{ fmt(p.amount) }}</span>
+            <span class="negative">合計 {{ fmt(fixedExpenseReadout.total) }}</span>
+          </template>
+          <template v-else>點選月份查看數字</template>
+        </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
+          <rect v-if="fixedExpensePick !== null" :x="fixedExpensePick * 300 / fixedExpenseChart.bars.length" y="-4" :width="300 / fixedExpenseChart.bars.length" height="108" class="trend-pick" />
           <template v-for="b in fixedExpenseChart.bars" :key="b.month">
             <rect v-for="seg in b.segments" :key="seg.key" :x="b.x" :y="seg.y" :width="b.width" :height="seg.height" :fill="seg.color" />
           </template>
+          <rect v-for="(b, i) in fixedExpenseChart.bars" :key="'hit-' + b.month" :x="i * 300 / fixedExpenseChart.bars.length" y="-4" :width="300 / fixedExpenseChart.bars.length" height="108" class="trend-hit" @click="pickFixedExpense(i)" />
         </svg>
         <div class="trend-labels">
-          <span v-for="b in fixedExpenseChart.bars" :key="'re-' + b.month">{{ b.month }}月</span>
+          <span v-for="(b, i) in fixedExpenseChart.bars" :key="'re-' + b.month" :class="{ picked: fixedExpensePick === i }" @click="pickFixedExpense(i)">{{ b.month }}月</span>
         </div>
       </section>
 
