@@ -133,6 +133,7 @@ const DashboardView = {
       typeFilters: [], // subset of expense/income/transfer; empty means "all"
       editingId: null,
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
+      categorySectionToggled: {}, // year view: that row's sections the operator folded/unfolded, by title
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
       expandedOtherLabelId: null, // ...and, when that row is 其他, which label inside it is expanded
       labelScope: 'period', // 標籤統計 reads the selected month/year ('period') or every date ('all') — for a trip spanning months
@@ -695,6 +696,15 @@ const DashboardView = {
     },
     toggleCategoryExpand(categoryId) {
       this.expandedCategoryId = this.expandedCategoryId === categoryId ? null : categoryId;
+      this.categorySectionToggled = {};
+    },
+    // Year view folds an expanded 分類支出 row's sections the way LabelDetail
+    // does: the breakdown open, the 12-row 逐月比較 folded, until toggled.
+    isCategorySectionOpen(title, open) {
+      return title in this.categorySectionToggled ? this.categorySectionToggled[title] : open;
+    },
+    toggleCategorySection(title, open) {
+      this.categorySectionToggled[title] = !this.isCategorySectionOpen(title, open);
     },
     // 分類支出(年度)'s 逐月比較: this category's (or, for the folded 其他 row,
     // every category folded into it) spending in each of the selected year's
@@ -1089,6 +1099,10 @@ const DashboardView = {
               <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCategoryPercent(row.amount) }}</span>
             </div>
             <div v-if="expandedCategoryId === row.category.id" class="category-detail">
+              <div v-if="viewMode === 'year'" class="category-detail-heading foldable" @click="toggleCategorySection(row.otherRows ? '依分類' : '依標籤', true)">
+                <span class="expand-arrow" :class="{ open: isCategorySectionOpen(row.otherRows ? '依分類' : '依標籤', true) }">›</span>{{ row.otherRows ? '依分類' : '依標籤' }}<span class="heading-count">{{ row.otherRows ? row.otherRows.length : categoryLabelBreakdown(row.category.id).length }}</span>
+              </div>
+              <template v-if="viewMode !== 'year' || isCategorySectionOpen(row.otherRows ? '依分類' : '依標籤', true)">
               <template v-if="row.otherRows">
                 <div v-for="d in row.otherRows" :key="d.category.id" class="category-detail-row">
                   <span class="category-detail-note">{{ d.category.icon }} {{ d.category.name }}</span>
@@ -1108,8 +1122,12 @@ const DashboardView = {
                   <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
                 </div>
               </template>
+              </template>
               <template v-if="viewMode === 'year'">
-                <div class="category-detail-heading">逐月比較</div>
+                <div class="category-detail-heading foldable" @click="toggleCategorySection('逐月比較', false)">
+                  <span class="expand-arrow" :class="{ open: isCategorySectionOpen('逐月比較', false) }">›</span>逐月比較
+                </div>
+                <template v-if="isCategorySectionOpen('逐月比較', false)">
                 <div v-for="d in categoryMonthlyBreakdown(row)" :key="d.month" class="category-detail-row">
                   <span class="category-detail-note">{{ d.month }}月</span>
                   <span class="category-detail-bar-track">
@@ -1117,6 +1135,7 @@ const DashboardView = {
                   </span>
                   <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
                 </div>
+                </template>
               </template>
             </div>
           </div>
