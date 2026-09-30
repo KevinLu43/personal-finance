@@ -122,7 +122,8 @@ const LabelDetail = {
 };
 
 const DashboardView = {
-  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups, DashboardAccountGroups, LabelDetail },
+  components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups, DashboardAccountGroups, LabelDetail, DonutChart },
+  mixins: [DonutFocusMixin],
   data() {
     const now = new Date();
     return {
@@ -152,14 +153,17 @@ const DashboardView = {
   watch: {
     // A different year or mode is a different list; don't carry an open month over.
     viewMode() {
+      this.clearDonutFocus();
       this.trendPick = null;
       this.expandedMonth = null;
       this.expandedDate = null;
     },
     month() {
+      this.clearDonutFocus();
       this.trendPick = null;
     },
     year() {
+      this.clearDonutFocus();
       this.trendPick = null;
       this.fixedExpensePick = null;
       this.expandedMonth = null;
@@ -1080,19 +1084,9 @@ const DashboardView = {
         <h3>{{ viewMode === 'year' ? '全年支出分類' : '支出分類' }}</h3>
         <div v-if="activeSummary.categoryBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有紀錄' : '這個月還沒有紀錄' }}</div>
         <template v-else>
-          <svg viewBox="0 0 100 100" class="donut-chart">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-            <circle
-              v-for="(seg, i) in donutSegments" :key="i"
-              cx="50" cy="50" r="40" fill="none"
-              :stroke="seg.color" stroke-width="14"
-              :stroke-dasharray="seg.dash + ' ' + seg.gap"
-              :stroke-dashoffset="seg.dashOffset"
-              transform="rotate(-90 50 50)"
-            />
-          </svg>
-          <div v-for="row in categoryBreakdownRows" :key="row.category.id">
-            <div class="bar-row clickable" @click="toggleCategoryExpand(row.category.id)">
+          <DonutChart :segments="donutSegments" :focus="donutFocusIndex('donutSegments', donutSegments)" @focus="toggleDonutFocus('donutSegments', $event)" />
+          <div v-for="(row, i) in categoryBreakdownRows" :key="row.category.id" :class="donutLegendClass('donutSegments', donutSegments, i)">
+            <div class="bar-row clickable" @click="toggleCategoryExpand(row.category.id); toggleDonutFocus('donutSegments', i)">
               <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
               <span class="bar-name">{{ row.category.name }}</span>
               <span class="expand-arrow" :class="{ open: expandedCategoryId === row.category.id }">›</span>
@@ -1183,19 +1177,9 @@ const DashboardView = {
         <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
         <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
         <template v-else>
-          <svg viewBox="0 0 100 100" class="donut-chart">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-            <circle
-              v-for="(seg, i) in fixedExpenseDonutSegments" :key="i"
-              cx="50" cy="50" r="40" fill="none"
-              :stroke="seg.color" stroke-width="14"
-              :stroke-dasharray="seg.dash + ' ' + seg.gap"
-              :stroke-dashoffset="seg.dashOffset"
-              transform="rotate(-90 50 50)"
-            />
-          </svg>
-          <div v-for="row in fixedExpenseCappedRows" :key="row.key">
-            <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleFixedExpenseOther()">
+          <DonutChart :segments="fixedExpenseDonutSegments" :focus="donutFocusIndex('fixedExpenseDonutSegments', fixedExpenseDonutSegments)" @focus="toggleDonutFocus('fixedExpenseDonutSegments', $event)" />
+          <div v-for="(row, i) in fixedExpenseCappedRows" :key="row.key" :class="donutLegendClass('fixedExpenseDonutSegments', fixedExpenseDonutSegments, i)">
+            <div class="bar-row clickable" @click="row.otherRows && toggleFixedExpenseOther(); toggleDonutFocus('fixedExpenseDonutSegments', i)">
               <span class="legend-swatch" :style="{ background: row.category.color }"></span>
               <span class="bar-name">{{ row.category.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
               <span v-if="row.otherRows" class="expand-arrow" :class="{ open: fixedExpenseOtherOpen }">›</span>
@@ -1216,19 +1200,9 @@ const DashboardView = {
 
       <section v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
         <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in incomeDonutSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in incomeBreakdownRows" :key="row.category.id">
-          <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleIncomeOther()">
+        <DonutChart :segments="incomeDonutSegments" :focus="donutFocusIndex('incomeDonutSegments', incomeDonutSegments)" @focus="toggleDonutFocus('incomeDonutSegments', $event)" />
+        <div v-for="(row, i) in incomeBreakdownRows" :key="row.category.id" :class="donutLegendClass('incomeDonutSegments', incomeDonutSegments, i)">
+          <div class="bar-row clickable" @click="row.otherRows && toggleIncomeOther(); toggleDonutFocus('incomeDonutSegments', i)">
             <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
             <span class="bar-name">{{ row.category.name }}</span>
             <span v-if="row.otherRows" class="expand-arrow" :class="{ open: incomeOtherOpen }">›</span>
@@ -1250,19 +1224,9 @@ const DashboardView = {
       <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
       <section v-if="creditCardDebtBreakdown.length" class="panel">
         <h3>信用卡欠款<span class="muted"> · 共 {{ fmt(creditCardDebtTotal) }}</span></h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in creditCardDebtSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in creditCardDebtRows" :key="row.category.name">
-          <div class="bar-row" :class="{ clickable: row.otherRows }" @click="row.otherRows && toggleCreditDebtOther()">
+        <DonutChart :segments="creditCardDebtSegments" :focus="donutFocusIndex('creditCardDebtSegments', creditCardDebtSegments)" @focus="toggleDonutFocus('creditCardDebtSegments', $event)" />
+        <div v-for="(row, i) in creditCardDebtRows" :key="row.category.name" :class="donutLegendClass('creditCardDebtSegments', creditCardDebtSegments, i)">
+          <div class="bar-row clickable" @click="row.otherRows && toggleCreditDebtOther(); toggleDonutFocus('creditCardDebtSegments', i)">
             <span class="legend-swatch" :style="{ background: row.category.color }"></span>
             <span class="bar-name">{{ row.category.name }}</span>
             <span v-if="row.otherRows" class="expand-arrow" :class="{ open: creditDebtOtherOpen }">›</span>
@@ -1282,21 +1246,11 @@ const DashboardView = {
 
       <section v-if="creditCardSpendBreakdown.length" class="panel">
         <h3>{{ viewMode === 'year' ? '全年信用卡刷卡' : '本月信用卡刷卡' }}<span class="muted"> · 共 {{ fmt(creditCardSpendTotal) }}</span></h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in creditCardSpendSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div v-for="row in creditCardSpendRows" :key="row.category.name">
+        <DonutChart :segments="creditCardSpendSegments" :focus="donutFocusIndex('creditCardSpendSegments', creditCardSpendSegments)" @focus="toggleDonutFocus('creditCardSpendSegments', $event)" />
+        <div v-for="(row, i) in creditCardSpendRows" :key="row.category.name" :class="donutLegendClass('creditCardSpendSegments', creditCardSpendSegments, i)">
           <div
-            class="bar-row" :class="{ clickable: row.otherRows || viewMode === 'year' }"
-            @click="row.otherRows ? toggleCreditSpendOther() : (viewMode === 'year' && toggleCreditCardExpand(row.accountId))"
+            class="bar-row clickable"
+            @click="row.otherRows ? toggleCreditSpendOther() : (viewMode === 'year' && toggleCreditCardExpand(row.accountId)); toggleDonutFocus('creditCardSpendSegments', i)"
           >
             <span class="legend-swatch" :style="{ background: row.category.color }"></span>
             <span class="bar-name">{{ row.category.name }}</span>

@@ -100,7 +100,14 @@ const TickerFixModal = {
 };
 
 const InvestmentOverviewView = {
-  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal, DividendFormModal, DividendRowItem },
+  components: { InvestmentRowItem, InvestmentFormModal, TickerFixModal, DividendFormModal, DividendRowItem, DonutChart },
+  mixins: [DonutFocusMixin],
+  watch: {
+    // 持股比例 is a different set of holdings per tab; don't carry a focused slice over.
+    selectedCategory() {
+      this.donutFocus = { ...this.donutFocus, portfolioSegments: null };
+    },
+  },
   data() {
     const now = new Date();
     return {
@@ -117,6 +124,10 @@ const InvestmentOverviewView = {
       clearedOpen: false, // the 已出清 group under the holdings list is folded until asked for
       dividendForm: null, // null closed, or { id: 'new' | a dividend's id, accountId, ticker } to open the 股利 form
       fixOpen: false, // the 補上代號 dialog
+      perfMode: 'year', // 已實現績效: 'year' (one row a year) | 'month' (perfYear's months)
+      perfYear: now.getFullYear(),
+      perfScope: 'all', // 'all' or one of categoryOptions' values
+      expandedPerfKey: null, // month view: which month's sells and dividends are listed
     };
   },
   computed: {
@@ -193,6 +204,57 @@ const InvestmentOverviewView = {
     },
     allocationSegments() {
       return Models.buildDonutSegments(this.allocationBreakdown);
+    },
+    // 已實現績效 has its own 全部/上市/上櫃/ETF/美股 scope, independent of the
+    // tabs below, so the whole portfolio can be read in one place.
+    perfHoldings() {
+      return this.allHoldings.filter((h) => this.inPerfScope(h.market, h.ticker));
+    },
+    perfDividends() {
+      const list = [];
+      for (const entry of this.dividendStats.values()) {
+        for (const t of entry.items) {
+          if (!this.inPerfScope(t.dividend.market, t.dividend.ticker)) continue;
+          list.push({ id: t.id, date: t.date, amount: Store.baseAmountOf(t), market: t.dividend.market, ticker: t.dividend.ticker });
+        }
+      }
+      return list;
+    },
+    // Every year from the first trade or dividend to this one, newest first.
+    perfYears() {
+      const dates = [...this.perfHoldings.flatMap((h) => h.history.map((e) => e.date)), ...this.perfDividends.map((d) => d.date)];
+      if (!dates.length) return [];
+      const first = Number(dates.reduce((a, b) => (a < b ? a : b)).slice(0, 4));
+      const last = Math.max(new Date().getFullYear(), first);
+      const years = [];
+      for (let y = last; y >= first; y--) years.push(y);
+      return years;
+    },
+    perfRows() {
+      const today = Models.localToday();
+      const upToToday = (end) => (end < today ? end : today);
+      let periods;
+      if (this.perfMode === 'year') {
+        periods = this.perfYears.map((y) => ({ key: String(y), label: String(y), start: `${y}-01-01`, end: upToToday(`${y}-12-31`) }));
+      } else {
+        periods = [];
+        for (let m = 1; m <= 12; m++) {
+          const ym = `${this.perfYear}-${String(m).padStart(2, '0')}`;
+          if (`${ym}-01` > today) break;
+          periods.push({ key: ym, label: `${m} 月`, start: `${ym}-01`, end: upToToday(`${ym}-31`) });
+        }
+      }
+      const rows = Models.realizedPerformance(this.perfHoldings, this.perfDividends, Store.state.rateHistory, periods)
+        .map((row, i) => ({ ...row, label: periods[i].label }));
+      // A year with nothing sold, paid or held says nothing; a month keeps its
+      // place so the twelve still read as a calendar.
+      return this.perfMode === 'year' ? rows.filter((r) => r.sells.length || r.dividends.length || r.heldCost > 0) : rows;
+    },
+    perfTotal() {
+      const pl = this.perfRows.reduce((s, r) => s + r.pl, 0);
+      const dividend = this.perfRows.reduce((s, r) => s + r.dividend, 0);
+      const soldCost = this.perfRows.reduce((s, r) => s + r.soldCost, 0);
+      return { pl, dividend, soldCost, total: pl + dividend, rate: soldCost > 0 ? (pl + dividend) / soldCost * 100 : null };
     },
     // Everything below this point is scoped to whichever tab is active —
     // one owner for "which category am I looking at" instead of each
@@ -428,6 +490,41 @@ const InvestmentOverviewView = {
       const total = pct(this.finalPL(h));
       return { total, price: total.value !== h.realizedPL ? pct(h.realizedPL) : null };
     },
+    inPerfScope(market, ticker) {
+      if (this.perfScope === 'all') return true;
+      if (this.perfScope === 'US') return market === 'US';
+      return market === 'TW' && Models.twInvestmentCategory(ticker) === this.perfScope;
+    },
+    fmtSigned(n) {
+      return (n > 0 ? '+' : '') + this.fmt(n);
+    },
+    fmtRate(rate) {
+      return (rate > 0 ? '+' : '') + rate.toFixed(1) + '%';
+    },
+    signClass(n) {
+      return n > 0 ? 'positive' : n < 0 ? 'negative' : '';
+    },
+    // A year opens its months; a month lists what made it up.
+    onPerfRow(row) {
+      if (this.perfMode === 'year') {
+        this.perfYear = Number(row.key);
+        this.setPerfMode('month');
+      } else if (row.sells.length || row.dividends.length) {
+        this.expandedPerfKey = this.expandedPerfKey === row.key ? null : row.key;
+      }
+    },
+    setPerfMode(mode) {
+      this.perfMode = mode;
+      this.expandedPerfKey = null;
+    },
+    shiftPerfYear(delta) {
+      this.perfYear += delta;
+      this.expandedPerfKey = null;
+    },
+    perfItemName(market, ticker) {
+      const name = window.tickerName(market, ticker);
+      return name ? `${ticker} ${name}` : ticker;
+    },
     fmtNative(n) {
       return (this.currentCurrency !== 'TWD' ? this.currencySymbol(this.currentCurrency) : '') + this.fmtCur(n, this.currentCurrency);
     },
@@ -467,17 +564,7 @@ const InvestmentOverviewView = {
 
       <section v-if="allocationBreakdown.length" class="panel">
         <h3>資產配置<span class="muted"> · 上市/上櫃/ETF/美股,持股成本換算台幣</span></h3>
-        <svg viewBox="0 0 100 100" class="donut-chart">
-          <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-          <circle
-            v-for="(seg, i) in allocationSegments" :key="i"
-            cx="50" cy="50" r="40" fill="none"
-            :stroke="seg.color" stroke-width="14"
-            :stroke-dasharray="seg.dash + ' ' + seg.gap"
-            :stroke-dashoffset="seg.dashOffset"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
+        <DonutChart :segments="allocationSegments" :focus="donutFocusIndex('allocationSegments', allocationSegments)" @focus="toggleDonutFocus('allocationSegments', $event)" />
         <div class="month-table-row month-table-header">
           <span class="month-table-cell month">分類</span>
           <span class="month-table-cell">佔比</span>
@@ -486,9 +573,9 @@ const InvestmentOverviewView = {
           <span class="month-table-cell">股利</span>
         </div>
         <div
-          v-for="row in allocationBreakdown" :key="row.value" class="month-table-row clickable"
-          :class="{ active: selectedCategory === row.value }"
-          @click="selectedCategory = row.value"
+          v-for="(row, i) in allocationBreakdown" :key="row.value" class="month-table-row clickable"
+          :class="{ active: selectedCategory === row.value, ...donutLegendClass('allocationSegments', allocationSegments, i) }"
+          @click="selectedCategory = row.value; toggleDonutFocus('allocationSegments', i)"
         >
           <span class="month-table-cell month"><span class="legend-swatch" :style="{ background: row.category.color }"></span>{{ row.category.name }}</span>
           <span class="month-table-cell">{{ fmtAllocationPercent(row.amount) }}</span>
@@ -505,6 +592,65 @@ const InvestmentOverviewView = {
         </div>
       </section>
 
+      <section v-if="perfYears.length" class="panel">
+        <h3>已實現績效<span class="muted"> · 賣出損益 + 股利,換算台幣,不含還沒賣的漲跌</span></h3>
+        <div class="chip-row">
+          <span class="chip" :class="{ selected: perfMode === 'year' }" @click="setPerfMode('year')">每年</span>
+          <span class="chip" :class="{ selected: perfMode === 'month' }" @click="setPerfMode('month')">每月</span>
+        </div>
+        <div class="chip-row" style="margin-bottom: 8px;">
+          <span class="chip" :class="{ selected: perfScope === 'all' }" @click="perfScope = 'all'">全部</span>
+          <span v-for="opt in categoryOptions" :key="opt.value" class="chip" :class="{ selected: perfScope === opt.value }" @click="perfScope = opt.value">{{ opt.label }}</span>
+        </div>
+        <div v-if="perfMode === 'month'" class="month-nav" style="margin-bottom: 8px;">
+          <button :disabled="perfYear <= perfYears[perfYears.length - 1]" @click="shiftPerfYear(-1)">‹</button>
+          <span class="month-label">{{ perfYear }} 年</span>
+          <button :disabled="perfYear >= perfYears[0]" @click="shiftPerfYear(1)">›</button>
+        </div>
+        <div class="month-table-row month-table-header">
+          <span class="month-table-cell month">{{ perfMode === 'year' ? '年度' : '月份' }}</span>
+          <span class="month-table-cell">已實現損益</span>
+          <span class="month-table-cell">股利</span>
+          <span class="month-table-cell">合計</span>
+        </div>
+        <div v-if="perfRows.length === 0" class="empty">{{ perfScope === 'all' ? '還沒有投資紀錄' : '這個分類還沒有投資紀錄' }}</div>
+        <div v-for="row in perfRows" :key="row.key" class="perf-row">
+          <div class="month-table-row clickable" @click="onPerfRow(row)">
+            <span class="month-table-cell month">
+              {{ row.label }}
+              <span v-if="perfMode === 'year' || row.sells.length || row.dividends.length" class="expand-arrow" :class="{ open: expandedPerfKey === row.key }">›</span>
+            </span>
+            <span class="month-table-cell" :class="signClass(row.pl)">{{ row.sells.length ? fmtSigned(row.pl) : '-' }}</span>
+            <span class="month-table-cell" :class="signClass(row.dividend)">{{ row.dividends.length ? fmtSigned(row.dividend) : '-' }}</span>
+            <span class="month-table-cell" :class="signClass(row.total)" style="font-weight: 700;">{{ row.sells.length || row.dividends.length ? fmtSigned(row.total) : '-' }}</span>
+          </div>
+          <div v-if="row.rate !== null || row.heldCost > 0" class="perf-sub">
+            <template v-if="row.rate !== null">報酬率 <span :class="signClass(row.rate)">{{ fmtRate(row.rate) }}</span>(賣出成本 {{ fmt(row.soldCost) }})· </template>
+            期末投入 {{ fmt(row.heldCost) }}
+          </div>
+          <div v-if="expandedPerfKey === row.key" class="category-detail">
+            <div v-for="(e, i) in row.sells" :key="'s' + i" class="category-detail-row">
+              <span class="category-detail-note">{{ e.date.slice(5).replace('-', '/') }} 賣出 {{ perfItemName(e.holding.market, e.holding.ticker) }} {{ e.quantity }} 股</span>
+              <span class="category-detail-amount wide" :class="signClass(e.pl)">{{ fmtSigned(e.pl) }}</span>
+            </div>
+            <div v-for="d in row.dividends" :key="d.id" class="category-detail-row">
+              <span class="category-detail-note">{{ d.date.slice(5).replace('-', '/') }} 股利 {{ perfItemName(d.market, d.ticker) }}</span>
+              <span class="category-detail-amount wide positive">{{ fmtSigned(d.amount) }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="perfRows.length" class="perf-row perf-total">
+          <div class="month-table-row">
+            <span class="month-table-cell month">{{ perfMode === 'year' ? '全部' : '全年' }}</span>
+            <span class="month-table-cell" :class="signClass(perfTotal.pl)">{{ fmtSigned(perfTotal.pl) }}</span>
+            <span class="month-table-cell" :class="signClass(perfTotal.dividend)">{{ fmtSigned(perfTotal.dividend) }}</span>
+            <span class="month-table-cell" :class="signClass(perfTotal.total)">{{ fmtSigned(perfTotal.total) }}</span>
+          </div>
+          <div v-if="perfTotal.rate !== null" class="perf-sub">報酬率 <span :class="signClass(perfTotal.rate)">{{ fmtRate(perfTotal.rate) }}</span>(賣出成本 {{ fmt(perfTotal.soldCost) }})</div>
+        </div>
+        <p class="perf-note">報酬率 = 合計 ÷ 當期賣出股票的成本;期末投入 = 期末還持有的股票成本,只供參考,不算進報酬率。</p>
+      </section>
+
       <div class="mode-toggle">
         <button v-for="opt in categoryOptions" :key="opt.value" :class="{ active: selectedCategory === opt.value }" @click="selectedCategory = opt.value">{{ opt.label }}</button>
       </div>
@@ -515,18 +661,8 @@ const InvestmentOverviewView = {
         <template v-if="currentHoldings.length > 0">
           <section v-if="portfolioBreakdown.length" class="panel">
             <h3>持股比例</h3>
-            <svg viewBox="0 0 100 100" class="donut-chart">
-              <circle cx="50" cy="50" r="40" fill="none" stroke="var(--line)" stroke-width="14" />
-              <circle
-                v-for="(seg, i) in portfolioSegments" :key="i"
-                cx="50" cy="50" r="40" fill="none"
-                :stroke="seg.color" stroke-width="14"
-                :stroke-dasharray="seg.dash + ' ' + seg.gap"
-                :stroke-dashoffset="seg.dashOffset"
-                transform="rotate(-90 50 50)"
-              />
-            </svg>
-            <div v-for="row in portfolioBreakdown" :key="row.category.name" class="bar-row">
+            <DonutChart :segments="portfolioSegments" :focus="donutFocusIndex('portfolioSegments', portfolioSegments)" @focus="toggleDonutFocus('portfolioSegments', $event)" />
+            <div v-for="(row, i) in portfolioBreakdown" :key="i" class="bar-row clickable" :class="donutLegendClass('portfolioSegments', portfolioSegments, i)" @click="toggleDonutFocus('portfolioSegments', i)">
               <span class="legend-swatch" :style="{ background: row.category.color }"></span>
               <span class="bar-name">{{ legendName(row.category.name) }}</span>
               <span class="bar-amount">{{ fmtPercent(row.amount) }}</span>

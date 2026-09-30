@@ -131,7 +131,7 @@ const AccountRowItem = {
 };
 
 const AccountsView = {
-  components: { AccountRowItem, IconPickerField, LoanPledgeModal, PledgeRowItem, PledgeExtendModal, PledgeRepayModal, PledgeEditModal },
+  components: { AccountRowItem, IconPickerField, ColorPickerField, LoanPledgeModal, PledgeRowItem, PledgeExtendModal, PledgeRepayModal, PledgeEditModal },
   mixins: [DragSortMixin],
   data() {
     return {
@@ -151,6 +151,14 @@ const AccountsView = {
   },
   computed: {
     sync() { return window.SyncInfo; },
+    // The accounts an account's colour sits beside (a credit card's slice in
+    // 信用卡欠款, say): the same kind, not archived, not the one being edited.
+    colorSiblings() {
+      if (!this.editingId || !this.form) return [];
+      return Store.state.accounts
+        .filter((a) => a.kind === this.form.kind && !a.isArchived && a.id !== this.editingId)
+        .map((a) => ({ name: a.name, color: a.color }));
+    },
     feedbackUrl() { return (window.APP_CONFIG && window.APP_CONFIG.feedbackUrl) || ''; },
     accounts() {
       return Store.state.accounts.slice().sort((a, b) => a.sortOrder - b.sortOrder);
@@ -291,6 +299,7 @@ const AccountsView = {
         stockTaxRate: Math.round(defaults.stockTaxRate * 1000000) / 10000,
         etfTaxRate: Math.round(defaults.etfTaxRate * 1000000) / 10000,
       };
+      this.form.color = Models.pickUnusedColor(this.colorSiblings.map((a) => a.color));
     },
     openEdit(account) {
       this.editingId = account.id;
@@ -592,7 +601,7 @@ const AccountsView = {
             <label>圖示
               <IconPickerField v-model="form.icon" @update:model-value="iconTouched = true" />
             </label>
-            <label>圖示底色 <input type="color" v-model="form.color" /></label>
+            <div class="field-group">圖示底色 <ColorPickerField v-model="form.color" :others="colorSiblings" /></div>
             <label>類型
               <select v-model="form.kind">
                 <option value="cash">現金</option>

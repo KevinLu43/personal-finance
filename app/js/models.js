@@ -25,21 +25,75 @@ function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// The swatches the colour picker offers, in the order a new category takes
+// them. Chosen to stay apart on a donut: the first seven are a categorical
+// palette validated for colour-blind separation, the next two were picked as
+// far from those as possible, and gray stays last for 其他-style rows.
+const CHART_PALETTE = [
+  { name: '藍', color: '#2a78d6' },
+  { name: '橘', color: '#eb6834' },
+  { name: '青綠', color: '#1baf7a' },
+  { name: '黃', color: '#eda100' },
+  { name: '粉紅', color: '#e87ba4' },
+  { name: '綠', color: '#008300' },
+  { name: '紫', color: '#4a3aa7' },
+  { name: '棕', color: '#875814' },
+  { name: '梅紅', color: '#9e3378' },
+  { name: '灰', color: '#adb5bd' },
+];
+
+// Perceptual distance between two '#rrggbb' colours: Euclidean distance in
+// OKLab, ×100. Under ~12 two slices of a donut start to read as one colour
+// (every pair in CHART_PALETTE is at least 12.9 apart).
+function hexToOklab(hex) {
+  const n = parseInt(String(hex).replace('#', ''), 16) || 0;
+  const lin = (c) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const r = lin(n >> 16), g = lin((n >> 8) & 255), b = lin(n & 255);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+  ];
+}
+function colorDistance(a, b) {
+  const x = hexToOklab(a), y = hexToOklab(b);
+  return 100 * Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+const COLOR_TOO_CLOSE = 12;
+function colorsTooClose(a, b) {
+  return colorDistance(a, b) < COLOR_TOO_CLOSE;
+}
+
+// A new category's (or account's) starting colour: the first palette swatch
+// not close to any colour its siblings already use, so it never starts out
+// as the same gray as 其他. Falls back to the first swatch nobody uses
+// exactly, then to the first swatch.
+function pickUnusedColor(usedColors) {
+  const used = usedColors.filter(Boolean);
+  const choices = CHART_PALETTE.slice(0, -1).map((c) => c.color); // gray is for 其他
+  return choices.find((c) => !used.some((u) => colorsTooClose(u, c)))
+    || choices.find((c) => !used.some((u) => u.toLowerCase() === c))
+    || choices[0];
+}
+
 // Seeded once on first launch. Not locked — the user can rename, reorder,
 // archive, or add their own; this is a starting point, not a fixed enum.
 const SEED_CATEGORIES = [
-  { name: '餐飲', kind: 'expense', icon: '🍚', color: '#e07a5f' },
-  { name: '交通', kind: 'expense', icon: '🚗', color: '#3d5a80' },
-  { name: '居住', kind: 'expense', icon: '🏠', color: '#8d6a9f' },
-  { name: '服飾', kind: 'expense', icon: '👕', color: '#5c9ead' },
-  { name: '醫療', kind: 'expense', icon: '💊', color: '#c1666b' },
-  { name: '教育學習', kind: 'expense', icon: '📚', color: '#588157' },
-  { name: '娛樂', kind: 'expense', icon: '🎮', color: '#f4a261' },
-  { name: '訂閱服務', kind: 'expense', icon: '🔁', color: '#6d6875' },
-  { name: '保險', kind: 'expense', icon: '🛡️', color: '#457b9d' },
+  { name: '餐飲', kind: 'expense', icon: '🍚', color: '#eb6834' },
+  { name: '交通', kind: 'expense', icon: '🚗', color: '#2a78d6' },
+  { name: '居住', kind: 'expense', icon: '🏠', color: '#4a3aa7' },
+  { name: '服飾', kind: 'expense', icon: '👕', color: '#e87ba4' },
+  { name: '醫療', kind: 'expense', icon: '💊', color: '#1baf7a' },
+  { name: '教育學習', kind: 'expense', icon: '📚', color: '#008300' },
+  { name: '娛樂', kind: 'expense', icon: '🎮', color: '#eda100' },
+  { name: '訂閱服務', kind: 'expense', icon: '🔁', color: '#9e3378' },
+  { name: '保險', kind: 'expense', icon: '🛡️', color: '#875814' },
   { name: '其他', kind: 'expense', icon: '❔', color: '#adb5bd' },
-  { name: '薪資', kind: 'income', icon: '💰', color: '#2a9d8f' },
-  { name: '投資收益', kind: 'income', icon: '📈', color: '#264653' },
+  { name: '薪資', kind: 'income', icon: '💰', color: '#1baf7a' },
+  { name: '投資收益', kind: 'income', icon: '📈', color: '#2a78d6' },
   { name: '其他收入', kind: 'income', icon: '❔', color: '#adb5bd' },
 ];
 
@@ -558,21 +612,28 @@ function holdingsSummary(investments) {
     let costBasis = 0;
     let realizedPL = 0;
     let soldCost = 0; // cost basis of every share ever sold — what realizedPL is a return on
+    // Each trade's effect, oldest first — what 已實現績效 buckets by date:
+    // a sell's P/L and the cost of what it sold, and the cost still held after.
+    const history = [];
 
     for (const inv of ordered) {
       const { net } = investmentAmounts(inv);
+      let pl = 0;
+      let soldCostBasis = 0;
       if (inv.action === 'buy') {
         quantity += inv.quantity;
         costBasis += net;
       } else {
         const avgCost = quantity > 0 ? costBasis / quantity : 0;
-        const soldCostBasis = avgCost * inv.quantity;
-        realizedPL += net - soldCostBasis;
+        soldCostBasis = avgCost * inv.quantity;
+        pl = net - soldCostBasis;
+        realizedPL += pl;
         soldCost += soldCostBasis;
         costBasis -= soldCostBasis;
         quantity -= inv.quantity;
         if (Math.abs(quantity) < 1e-9) { quantity = 0; costBasis = 0; } // clear float drift on a full exit
       }
+      history.push({ date: inv.date, action: inv.action, quantity: inv.quantity, pl, soldCost: soldCostBasis, costBasis });
     }
 
     holdings.push({
@@ -584,6 +645,7 @@ function holdingsSummary(investments) {
       costBasis,
       realizedPL,
       soldCost,
+      history,
     });
   }
 
@@ -610,6 +672,44 @@ function portfolioBreakdown(holdings) {
       amount: h.costBasis,
     }))
     .sort((a, b) => b.amount - a.amount);
+}
+
+// 已實現績效: for each period ({ key, start, end }, inclusive 'YYYY-MM-DD'),
+// what selling and dividends actually brought in, in TWD. A sell counts in
+// the period it happened (at that day's rate), a dividend in the one it was
+// paid (`dividends` already in TWD: { date, amount, holding }). `soldCost` is
+// what the shares sold that period cost — the rate's denominator — and
+// `heldCost` the cost still invested at the period's end (at that day's
+// rate), shown beside it but not part of the rate. There are no market
+// prices here, so nothing unrealised is in any of it.
+function realizedPerformance(holdings, dividends, rateHistory, periods) {
+  return periods.map((p) => {
+    const row = { key: p.key, pl: 0, dividend: 0, soldCost: 0, heldCost: 0, sells: [], dividends: [] };
+    for (const h of holdings) {
+      const currency = marketCurrency(h.market);
+      let lastCost = 0;
+      for (const e of h.history) {
+        if (e.date > p.end) break;
+        lastCost = e.costBasis;
+        if (e.action !== 'sell' || e.date < p.start) continue;
+        const rate = rateOf(currency, rateHistory, e.date);
+        row.pl += e.pl * rate;
+        row.soldCost += e.soldCost * rate;
+        row.sells.push({ date: e.date, holding: h, quantity: e.quantity, pl: e.pl * rate });
+      }
+      row.heldCost += lastCost * rateOf(currency, rateHistory, p.end);
+    }
+    for (const d of dividends) {
+      if (d.date < p.start || d.date > p.end) continue;
+      row.dividend += d.amount;
+      row.dividends.push(d);
+    }
+    row.total = row.pl + row.dividend;
+    row.rate = row.soldCost > 0 ? row.total / row.soldCost * 100 : null;
+    row.sells.sort((a, b) => (a.date < b.date ? -1 : 1));
+    row.dividends.sort((a, b) => (a.date < b.date ? -1 : 1));
+    return row;
+  });
 }
 
 // Income/expense for each of the `monthCount` months ending at (and
@@ -722,16 +822,22 @@ function buildTrendChart(months) {
 // A ring built from stacked circle strokes: each row gets a dash whose
 // length is its share of the circle's circumference, offset by however much
 // the segments before it already used. The caller rotates the group -90deg
-// so the first segment starts at 12 o'clock instead of 3.
+// so the first segment starts at 12 o'clock instead of 3. With more than one
+// slice, each stops a little short of the next (DONUT_GAP, about 2px on the
+// 140px chart) so the surface shows between them and neighbouring colours
+// never run together; a slice too small for that keeps a sliver.
+const DONUT_GAP = 1.5;
 function buildDonutSegments(categoryBreakdown) {
   const total = categoryBreakdown.reduce((s, row) => s + row.amount, 0);
   if (total <= 0) return [];
   const circumference = 2 * Math.PI * 40;
+  const gap = categoryBreakdown.filter((row) => row.amount > 0).length > 1 ? DONUT_GAP : 0;
   let offset = 0;
   return categoryBreakdown.map((row) => {
-    const dash = (row.amount / total) * circumference;
+    const share = (row.amount / total) * circumference;
+    const dash = share > 0 ? Math.max(share - gap, 0.3) : 0;
     const seg = { color: row.category.color, dash, gap: circumference - dash, dashOffset: -offset };
-    offset += dash;
+    offset += share;
     return seg;
   });
 }
@@ -1349,6 +1455,10 @@ window.Models = {
   localToday,
   validateBackup,
   SEED_CATEGORIES,
+  CHART_PALETTE,
+  colorDistance,
+  colorsTooClose,
+  pickUnusedColor,
   buildBackup,
   newAccount,
   accountIcon,
@@ -1389,6 +1499,7 @@ window.Models = {
   budgetProgress,
   evaluateExpression,
   portfolioBreakdown,
+  realizedPerformance,
   netWorthTrend,
   accountHoldingsCost,
   installmentBreakdown,

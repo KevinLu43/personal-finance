@@ -1,5 +1,5 @@
 const CategoriesView = {
-  components: { IconPickerField },
+  components: { IconPickerField, ColorPickerField },
   mixins: [DragSortMixin],
   data() {
     return {
@@ -23,6 +23,20 @@ const CategoriesView = {
     labels() {
       return Store.state.labels.slice().sort((a, b) => a.sortOrder - b.sortOrder);
     },
+    // The categories a category's colour shares a donut with: the same kind,
+    // not archived, not the one being edited.
+    colorSiblings() {
+      if (!this.editingId) return [];
+      return Store.state.categories
+        .filter((c) => c.kind === this.form.kind && !c.isArchived && c.id !== this.editingId)
+        .map((c) => ({ name: c.name, color: c.color }));
+    },
+    labelColorSiblings() {
+      if (!this.labelEditingId) return [];
+      return Store.state.labels
+        .filter((l) => !l.isArchived && l.id !== this.labelEditingId)
+        .map((l) => ({ name: l.name, color: l.color }));
+    },
   },
   methods: {
     blankForm() {
@@ -31,6 +45,7 @@ const CategoriesView = {
     openNew(kind) {
       this.editingId = 'new';
       this.form = { ...this.blankForm(), kind };
+      this.form.color = Models.pickUnusedColor(this.colorSiblings.map((c) => c.color));
     },
     openEdit(category) {
       this.editingId = category.id;
@@ -205,7 +220,7 @@ const CategoriesView = {
           <div class="modal-body">
             <label>名稱 <input v-model="form.name" /></label>
             <label>圖示 <IconPickerField v-model="form.icon" /></label>
-            <label>顏色 <input type="color" v-model="form.color" /></label>
+            <div class="field-group">顏色 <ColorPickerField v-model="form.color" :others="colorSiblings" /></div>
             <template v-if="form.kind === 'expense'">
               <label>月度預算(留空表示不設定) <input type="number" min="0" v-model="form.budgetLimit" placeholder="不設定" /></label>
               <label v-if="form.budgetLimit">警示門檻(%,花到這個比例會標黃)
@@ -226,7 +241,7 @@ const CategoriesView = {
           <div class="modal-body">
             <label>名稱 <input v-model="labelForm.name" placeholder="例如：固定支出" /></label>
             <label>圖示 <IconPickerField v-model="labelForm.icon" /></label>
-            <label>顏色 <input type="color" v-model="labelForm.color" /></label>
+            <div class="field-group">顏色 <ColorPickerField v-model="labelForm.color" :others="labelColorSiblings" /></div>
           </div>
           <div class="modal-actions">
             <button @click="cancelLabel">取消</button>
