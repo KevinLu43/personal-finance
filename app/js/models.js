@@ -557,6 +557,7 @@ function holdingsSummary(investments) {
     let quantity = 0;
     let costBasis = 0;
     let realizedPL = 0;
+    let soldCost = 0; // cost basis of every share ever sold — what realizedPL is a return on
 
     for (const inv of ordered) {
       const { net } = investmentAmounts(inv);
@@ -567,6 +568,7 @@ function holdingsSummary(investments) {
         const avgCost = quantity > 0 ? costBasis / quantity : 0;
         const soldCostBasis = avgCost * inv.quantity;
         realizedPL += net - soldCostBasis;
+        soldCost += soldCostBasis;
         costBasis -= soldCostBasis;
         quantity -= inv.quantity;
         if (Math.abs(quantity) < 1e-9) { quantity = 0; costBasis = 0; } // clear float drift on a full exit
@@ -581,6 +583,7 @@ function holdingsSummary(investments) {
       avgCost: quantity > 0 ? costBasis / quantity : 0,
       costBasis,
       realizedPL,
+      soldCost,
     });
   }
 

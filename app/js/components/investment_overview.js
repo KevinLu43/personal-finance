@@ -412,6 +412,22 @@ const InvestmentOverviewView = {
       if (!d || !(h.quantity > 0) || !(h.costBasis > 0) || !(d.last12 > 0)) return '';
       return (d.last12 / h.costBasis * 100).toFixed(1) + '%';
     },
+    // A cleared holding's 最終損益 counts its dividends too — once nothing is
+    // held, the trades and the dividends are everything it ever earned. A held
+    // one keeps its plain realized P/L, the figure the brokerage shows.
+    finalPL(h) {
+      if (h.quantity > 0) return h.realizedPL;
+      return h.realizedPL + (this.dividendOf(h) ? this.dividendOf(h).total : 0);
+    },
+    // A cleared holding's return on what the sold shares cost, with dividends
+    // (`total`) and, when there were any, without (`price`, 價差 alone). Only
+    // once nothing is held, so the rate is final rather than a partial one.
+    clearedReturn(h) {
+      if (h.quantity > 0 || !(h.soldCost > 0)) return null;
+      const pct = (n) => ({ value: n, text: (n > 0 ? '+' : '') + (n / h.soldCost * 100).toFixed(1) + '%' });
+      const total = pct(this.finalPL(h));
+      return { total, price: total.value !== h.realizedPL ? pct(h.realizedPL) : null };
+    },
     fmtNative(n) {
       return (this.currentCurrency !== 'TWD' ? this.currencySymbol(this.currentCurrency) : '') + this.fmtCur(n, this.currentCurrency);
     },
@@ -541,11 +557,15 @@ const InvestmentOverviewView = {
                     {{ accountName(h) }}<template v-if="h.quantity > 0"> · {{ '持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost) }}</template>
                     <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
                     <span v-if="dividendOf(h)" class="positive"> · 股利 +{{ fmtNative(dividendOf(h).total) }}<template v-if="dividendYieldText(h)"> · 殖利率 {{ dividendYieldText(h) }}</template></span>
+                    <template v-if="clearedReturn(h)">
+                      · <span :class="{ positive: clearedReturn(h).total.value > 0, negative: clearedReturn(h).total.value < 0 }">報酬率 {{ clearedReturn(h).total.text }}<template v-if="clearedReturn(h).price">(含股利)</template></span>
+                      <span v-if="clearedReturn(h).price" :class="{ positive: clearedReturn(h).price.value > 0, negative: clearedReturn(h).price.value < 0 }">· 價差 {{ clearedReturn(h).price.text }}</span>
+                    </template>
                   </div>
                 </div>
-                <div class="list-row-amount" :class="{ negative: h.realizedPL < 0, positive: h.realizedPL > 0 }">
-                  <span v-if="!(h.quantity > 0)" class="amount-note">最終損益 </span>{{ h.realizedPL > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(h.realizedPL, currentCurrency) }}
-                  <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.realizedPL)) }}</div>
+                <div class="list-row-amount" :class="{ negative: finalPL(h) < 0, positive: finalPL(h) > 0 }">
+                  <span v-if="!(h.quantity > 0)" class="amount-note">最終損益 </span>{{ finalPL(h) > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(finalPL(h), currentCurrency) }}
+                  <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(finalPL(h))) }}</div>
                 </div>
                 <span class="expand-arrow" :class="{ open: expandedHoldingKey === holdingKey(h) }">›</span>
               </div>
