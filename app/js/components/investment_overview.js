@@ -562,6 +562,8 @@ const InvestmentOverviewView = {
         <button class="primary" @click="fixOpen = true">補上代號</button>
       </div>
 
+      <div class="panel-grid overview-summary">
+      <div class="panel-pair">
       <section v-if="allocationBreakdown.length" class="panel">
         <h3>資產配置<span class="muted"> · 上市/上櫃/ETF/美股,持股成本換算台幣</span></h3>
         <DonutChart :segments="allocationSegments" :focus="donutFocusIndex('allocationSegments', allocationSegments)" @focus="toggleDonutFocus('allocationSegments', $event)" />
@@ -650,6 +652,8 @@ const InvestmentOverviewView = {
         </div>
         <p class="perf-note">報酬率 = 合計 ÷ 當期賣出股票的成本;期末投入 = 期末還持有的股票成本,只供參考,不算進報酬率。</p>
       </section>
+      </div>
+      </div>
 
       <div class="mode-toggle">
         <button v-for="opt in categoryOptions" :key="opt.value" :class="{ active: selectedCategory === opt.value }" @click="selectedCategory = opt.value">{{ opt.label }}</button>
@@ -657,9 +661,9 @@ const InvestmentOverviewView = {
 
       <div v-if="currentHoldings.length === 0" class="empty">{{ categoryLabel }}還沒有任何投資交易</div>
 
-      <div class="panel-grid">
+      <div class="panel-grid holdings-grid" :class="{ 'no-donut': !portfolioBreakdown.length, 'no-holdings': currentHoldings.length === 0 }">
         <template v-if="currentHoldings.length > 0">
-          <section v-if="portfolioBreakdown.length" class="panel">
+          <section v-if="portfolioBreakdown.length" class="panel holdings-donut">
             <h3>持股比例</h3>
             <DonutChart :segments="portfolioSegments" :focus="donutFocusIndex('portfolioSegments', portfolioSegments)" @focus="toggleDonutFocus('portfolioSegments', $event)" />
             <div v-for="(row, i) in portfolioBreakdown" :key="i" class="bar-row clickable" :class="donutLegendClass('portfolioSegments', portfolioSegments, i)" @click="toggleDonutFocus('portfolioSegments', i)">
@@ -669,7 +673,7 @@ const InvestmentOverviewView = {
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel holdings-list">
             <div class="subsection-header">
               <span>{{ categoryLabel }}</span>
               <span :class="currentRealizedPL >= 0 ? 'positive' : 'negative'">
@@ -715,7 +719,7 @@ const InvestmentOverviewView = {
           </section>
         </template>
 
-        <section class="panel">
+        <section class="panel holdings-trades">
           <div class="view-header">
             <h3>交易明細<span v-if="showAllCategories" class="muted"> · 全部分類</span></h3>
             <button class="primary" @click="openNew">+ 新增</button>

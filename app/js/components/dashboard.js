@@ -1023,25 +1023,7 @@ const DashboardView = {
         </div>
       </section>
 
-      <section v-if="budgetProgress.length" class="panel" :class="{ 'span-2': viewMode === 'year' }">
-        <h3>預算<span v-if="viewMode === 'year'" class="muted"> · 全年(每月上限 × 12)</span></h3>
-        <div v-for="row in budgetProgress" :key="row.category.id" class="budget-row">
-          <div class="budget-row-top">
-            <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
-            <span class="bar-name">{{ row.category.name }}</span>
-            <span class="budget-amount" :class="row.status">{{ fmt(row.spent) }} / {{ fmt(row.limit) }}</span>
-          </div>
-          <div class="budget-track">
-            <div class="budget-fill" :class="row.status" :style="{ width: Math.min(row.ratio, 1) * 100 + '%' }"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Month view flows its panels through the two-column grid (the wrappers are
-           display: contents), so a missing optional panel like 預算 or the card
-           breakdowns never leaves a lone half-empty row; year view keeps the pairs. -->
-      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
-      <section v-if="viewMode === 'year'" class="panel">
+      <section v-if="viewMode === 'year'" class="panel span-2">
         <h3>逐月明細</h3>
         <div class="month-table-row month-table-header">
           <span class="month-table-cell month">月份</span>
@@ -1056,7 +1038,6 @@ const DashboardView = {
           <span class="month-table-cell" :class="{ negative: m.net < 0, positive: m.net > 0 }">{{ fmt(m.net) }}</span>
         </div>
       </section>
-      </div>
 
       <!-- Full width in both modes — 資產 and 負債 side by side need the room
            a half-width panel doesn't have, so this isn't paired with anything. -->
@@ -1079,8 +1060,13 @@ const DashboardView = {
         </div>
       </section>
 
-      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
-      <section class="panel">
+      <!-- The breakdowns run down two independent columns, so a tall panel
+           (支出分類) never leaves a hole beside a short one (標籤統計) the way
+           grid rows did. On a phone the columns are display: contents and
+           each panel's order puts them back in one reading order. -->
+      <div class="dash-cols">
+      <div class="dash-col">
+      <section style="order: 1;" class="panel">
         <h3>{{ viewMode === 'year' ? '全年支出分類' : '支出分類' }}</h3>
         <div v-if="activeSummary.categoryBreakdown.length === 0" class="empty">{{ viewMode === 'year' ? '這一年還沒有紀錄' : '這個月還沒有紀錄' }}</div>
         <template v-else>
@@ -1136,44 +1122,21 @@ const DashboardView = {
         </template>
       </section>
 
-      <section class="panel">
-        <h3>{{ labelScope === 'all' ? '標籤統計 · 全部期間' : (viewMode === 'year' ? '全年標籤統計' : '標籤統計') }}</h3>
-        <div class="chip-row" style="margin: 0 0 8px;">
-          <span class="chip" :class="{ selected: labelScope === 'period' }" @click="labelScope = 'period'">{{ viewMode === 'year' ? '本年' : '本月' }}</span>
-          <span class="chip" :class="{ selected: labelScope === 'all' }" @click="labelScope = 'all'">全部期間</span>
-        </div>
-        <div v-if="labelBreakdown.length === 0" class="empty">{{ labelScope === 'all' ? '還沒有標籤紀錄' : (viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄') }}</div>
-        <div v-for="row in labelBreakdownRows" :key="row.label.id">
-          <div class="bar-row clickable" @click="toggleLabelExpand(row.label.id)">
-            <span class="icon-badge-sm" :style="{ background: (row.label.color || '#6d6875') + '30' }">{{ row.label.icon || '🏷️' }}</span>
-            <span class="bar-name">{{ row.label.name }}</span>
-            <span class="expand-arrow" :class="{ open: expandedLabelId === row.label.id }">›</span>
-            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtLabelPercent(row.amount) }}</span>
+      <section style="order: 2;" v-if="budgetProgress.length" class="panel">
+        <h3>預算<span v-if="viewMode === 'year'" class="muted"> · 全年(每月上限 × 12)</span></h3>
+        <div v-for="row in budgetProgress" :key="row.category.id" class="budget-row">
+          <div class="budget-row-top">
+            <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
+            <span class="bar-name">{{ row.category.name }}</span>
+            <span class="budget-amount" :class="row.status">{{ fmt(row.spent) }} / {{ fmt(row.limit) }}</span>
           </div>
-          <div v-if="expandedLabelId === row.label.id" class="category-detail">
-            <template v-if="row.otherRows">
-              <template v-for="d in row.otherRows" :key="d.label.id">
-                <div class="category-detail-row clickable-row" @click="toggleOtherLabelExpand(d.label.id)">
-                  <span class="category-detail-note">{{ d.label.icon || '🏷️' }} {{ d.label.name }}</span>
-                  <span class="category-detail-bar-track">
-                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.label.color || '#6d6875' }"></span>
-                  </span>
-                  <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-                  <span class="expand-arrow" :class="{ open: expandedOtherLabelId === d.label.id }">›</span>
-                </div>
-                <div v-if="expandedOtherLabelId === d.label.id" class="category-detail">
-                  <LabelDetail :detail="labelDetail(d.label.id, d.amount)" />
-                </div>
-              </template>
-            </template>
-            <LabelDetail v-else :detail="labelDetail(row.label.id, row.amount)" />
+          <div class="budget-track">
+            <div class="budget-fill" :class="row.status" :style="{ width: Math.min(row.ratio, 1) * 100 + '%' }"></div>
           </div>
         </div>
       </section>
-      </div>
 
-      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
-      <section v-if="viewMode === 'month'" class="panel">
+      <section style="order: 4;" v-if="viewMode === 'month'" class="panel">
         <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
         <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
         <template v-else>
@@ -1198,53 +1161,7 @@ const DashboardView = {
         </template>
       </section>
 
-      <section v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
-        <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
-        <DonutChart :segments="incomeDonutSegments" :focus="donutFocusIndex('incomeDonutSegments', incomeDonutSegments)" @focus="toggleDonutFocus('incomeDonutSegments', $event)" />
-        <div v-for="(row, i) in incomeBreakdownRows" :key="row.category.id" :class="donutLegendClass('incomeDonutSegments', incomeDonutSegments, i)">
-          <div class="bar-row clickable" @click="row.otherRows && toggleIncomeOther(); toggleDonutFocus('incomeDonutSegments', i)">
-            <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
-            <span class="bar-name">{{ row.category.name }}</span>
-            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: incomeOtherOpen }">›</span>
-            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
-          </div>
-          <div v-if="row.otherRows && incomeOtherOpen" class="category-detail">
-            <div v-for="d in row.otherRows" :key="d.category.id" class="category-detail-row">
-              <span class="category-detail-note">{{ d.category.icon }} {{ d.category.name }}</span>
-              <span class="category-detail-bar-track">
-                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color || '#adb5bd' }"></span>
-              </span>
-              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-      </div>
-
-      <div :class="viewMode === 'year' ? 'panel-pair' : 'panel-contents'">
-      <section v-if="creditCardDebtBreakdown.length" class="panel">
-        <h3>信用卡欠款<span class="muted"> · 共 {{ fmt(creditCardDebtTotal) }}</span></h3>
-        <DonutChart :segments="creditCardDebtSegments" :focus="donutFocusIndex('creditCardDebtSegments', creditCardDebtSegments)" @focus="toggleDonutFocus('creditCardDebtSegments', $event)" />
-        <div v-for="(row, i) in creditCardDebtRows" :key="row.category.name" :class="donutLegendClass('creditCardDebtSegments', creditCardDebtSegments, i)">
-          <div class="bar-row clickable" @click="row.otherRows && toggleCreditDebtOther(); toggleDonutFocus('creditCardDebtSegments', i)">
-            <span class="legend-swatch" :style="{ background: row.category.color }"></span>
-            <span class="bar-name">{{ row.category.name }}</span>
-            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: creditDebtOtherOpen }">›</span>
-            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
-          </div>
-          <div v-if="row.otherRows && creditDebtOtherOpen" class="category-detail">
-            <div v-for="d in row.otherRows" :key="d.category.name" class="category-detail-row">
-              <span class="category-detail-note"><span class="legend-swatch" :style="{ background: d.category.color }"></span>{{ d.category.name }}</span>
-              <span class="category-detail-bar-track">
-                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
-              </span>
-              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="creditCardSpendBreakdown.length" class="panel">
+      <section style="order: 7;" v-if="creditCardSpendBreakdown.length" class="panel">
         <h3>{{ viewMode === 'year' ? '全年信用卡刷卡' : '本月信用卡刷卡' }}<span class="muted"> · 共 {{ fmt(creditCardSpendTotal) }}</span></h3>
         <DonutChart :segments="creditCardSpendSegments" :focus="donutFocusIndex('creditCardSpendSegments', creditCardSpendSegments)" @focus="toggleDonutFocus('creditCardSpendSegments', $event)" />
         <div v-for="(row, i) in creditCardSpendRows" :key="row.category.name" :class="donutLegendClass('creditCardSpendSegments', creditCardSpendSegments, i)">
@@ -1278,6 +1195,87 @@ const DashboardView = {
           </div>
         </div>
       </section>
+      </div>
+      <div class="dash-col">
+      <section style="order: 3;" class="panel">
+        <h3>{{ labelScope === 'all' ? '標籤統計 · 全部期間' : (viewMode === 'year' ? '全年標籤統計' : '標籤統計') }}</h3>
+        <div class="chip-row" style="margin: 0 0 8px;">
+          <span class="chip" :class="{ selected: labelScope === 'period' }" @click="labelScope = 'period'">{{ viewMode === 'year' ? '本年' : '本月' }}</span>
+          <span class="chip" :class="{ selected: labelScope === 'all' }" @click="labelScope = 'all'">全部期間</span>
+        </div>
+        <div v-if="labelBreakdown.length === 0" class="empty">{{ labelScope === 'all' ? '還沒有標籤紀錄' : (viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄') }}</div>
+        <div v-for="row in labelBreakdownRows" :key="row.label.id">
+          <div class="bar-row clickable" @click="toggleLabelExpand(row.label.id)">
+            <span class="icon-badge-sm" :style="{ background: (row.label.color || '#6d6875') + '30' }">{{ row.label.icon || '🏷️' }}</span>
+            <span class="bar-name">{{ row.label.name }}</span>
+            <span class="expand-arrow" :class="{ open: expandedLabelId === row.label.id }">›</span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtLabelPercent(row.amount) }}</span>
+          </div>
+          <div v-if="expandedLabelId === row.label.id" class="category-detail">
+            <template v-if="row.otherRows">
+              <template v-for="d in row.otherRows" :key="d.label.id">
+                <div class="category-detail-row clickable-row" @click="toggleOtherLabelExpand(d.label.id)">
+                  <span class="category-detail-note">{{ d.label.icon || '🏷️' }} {{ d.label.name }}</span>
+                  <span class="category-detail-bar-track">
+                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.label.color || '#6d6875' }"></span>
+                  </span>
+                  <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+                  <span class="expand-arrow" :class="{ open: expandedOtherLabelId === d.label.id }">›</span>
+                </div>
+                <div v-if="expandedOtherLabelId === d.label.id" class="category-detail">
+                  <LabelDetail :detail="labelDetail(d.label.id, d.amount)" />
+                </div>
+              </template>
+            </template>
+            <LabelDetail v-else :detail="labelDetail(row.label.id, row.amount)" />
+          </div>
+        </div>
+      </section>
+
+      <section style="order: 5;" v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
+        <h3>{{ viewMode === 'year' ? '全年收入分類' : '收入分類' }}</h3>
+        <DonutChart :segments="incomeDonutSegments" :focus="donutFocusIndex('incomeDonutSegments', incomeDonutSegments)" @focus="toggleDonutFocus('incomeDonutSegments', $event)" />
+        <div v-for="(row, i) in incomeBreakdownRows" :key="row.category.id" :class="donutLegendClass('incomeDonutSegments', incomeDonutSegments, i)">
+          <div class="bar-row clickable" @click="row.otherRows && toggleIncomeOther(); toggleDonutFocus('incomeDonutSegments', i)">
+            <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
+            <span class="bar-name">{{ row.category.name }}</span>
+            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: incomeOtherOpen }">›</span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtIncomePercent(row.amount) }}</span>
+          </div>
+          <div v-if="row.otherRows && incomeOtherOpen" class="category-detail">
+            <div v-for="d in row.otherRows" :key="d.category.id" class="category-detail-row">
+              <span class="category-detail-note">{{ d.category.icon }} {{ d.category.name }}</span>
+              <span class="category-detail-bar-track">
+                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color || '#adb5bd' }"></span>
+              </span>
+              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section style="order: 6;" v-if="creditCardDebtBreakdown.length" class="panel">
+        <h3>信用卡欠款<span class="muted"> · 共 {{ fmt(creditCardDebtTotal) }}</span></h3>
+        <DonutChart :segments="creditCardDebtSegments" :focus="donutFocusIndex('creditCardDebtSegments', creditCardDebtSegments)" @focus="toggleDonutFocus('creditCardDebtSegments', $event)" />
+        <div v-for="(row, i) in creditCardDebtRows" :key="row.category.name" :class="donutLegendClass('creditCardDebtSegments', creditCardDebtSegments, i)">
+          <div class="bar-row clickable" @click="row.otherRows && toggleCreditDebtOther(); toggleDonutFocus('creditCardDebtSegments', i)">
+            <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+            <span class="bar-name">{{ row.category.name }}</span>
+            <span v-if="row.otherRows" class="expand-arrow" :class="{ open: creditDebtOtherOpen }">›</span>
+            <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
+          </div>
+          <div v-if="row.otherRows && creditDebtOtherOpen" class="category-detail">
+            <div v-for="d in row.otherRows" :key="d.category.name" class="category-detail-row">
+              <span class="category-detail-note"><span class="legend-swatch" :style="{ background: d.category.color }"></span>{{ d.category.name }}</span>
+              <span class="category-detail-bar-track">
+                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
+              </span>
+              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      </div>
       </div>
 
       <section class="panel span-2">
