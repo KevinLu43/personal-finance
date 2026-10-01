@@ -21,6 +21,9 @@ const TransactionsView = {
     todayStr() {
       return Models.localToday();
     },
+    selectedHoliday() {
+      return Models.holidayOf(this.selectedDay);
+    },
     weekdayLabels() {
       return WEEKDAY_LABELS;
     },
@@ -32,9 +35,11 @@ const TransactionsView = {
       for (let i = 0; i < firstWeekday; i++) cells.push(null);
       for (let d = 1; d <= daysInMonth; d++) {
         const row = totals.get(d) || { expense: 0, income: 0 };
+        const dateStr = `${this.yearMonth}-${String(d).padStart(2, '0')}`;
         cells.push({
           day: d,
-          dateStr: `${this.yearMonth}-${String(d).padStart(2, '0')}`,
+          dateStr,
+          holiday: Models.holidayOf(dateStr),
           expense: row.expense,
           income: row.income,
         });
@@ -136,18 +141,19 @@ const TransactionsView = {
         </div>
 
         <div class="calendar-weekdays">
-          <span v-for="w in weekdayLabels" :key="w">{{ w }}</span>
+          <span v-for="(w, i) in weekdayLabels" :key="w" :class="{ weekend: i === 0 || i === 6 }">{{ w }}</span>
         </div>
         <div class="calendar-grid">
           <div
             v-for="(cell, i) in calendarCells"
             :key="i"
             class="calendar-day"
-            :class="{ empty: !cell, today: cell && cell.dateStr === todayStr, selected: cell && cell.dateStr === selectedDay }"
+            :class="{ empty: !cell, today: cell && cell.dateStr === todayStr, selected: cell && cell.dateStr === selectedDay, off: cell && cell.holiday.off, holiday: cell && cell.holiday.holiday, makeup: cell && cell.holiday.makeup }"
             @click="cell && selectDay(cell.dateStr)"
           >
             <template v-if="cell">
               <div class="day-num">{{ cell.day }}</div>
+              <div v-if="cell.holiday.short" class="day-holiday">{{ cell.holiday.short }}</div>
               <div v-if="cell.expense" class="day-amount negative">-{{ fmt(cell.expense) }}</div>
               <div v-if="cell.income" class="day-amount positive">+{{ fmt(cell.income) }}</div>
             </template>
@@ -161,6 +167,7 @@ const TransactionsView = {
           <h3>{{ selectedDay }}</h3>
           <button class="primary" @click="openNew(selectedDay)">+ 新增</button>
         </div>
+        <div v-if="selectedHoliday.name" class="selected-day-holiday" :class="{ off: selectedHoliday.off }">{{ selectedHoliday.name }}</div>
 
         <div v-if="selectedDayTransactions.length === 0" class="empty">這天還沒有紀錄</div>
 

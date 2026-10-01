@@ -79,6 +79,22 @@ function pickUnusedColor(usedColors) {
     || choices[0];
 }
 
+// What the calendar shows for one 'YYYY-MM-DD': whether it is a day off,
+// the official name if it has one (中秋節, 補假, 補行上班) and a short form
+// that fits in a calendar cell. Taiwan's official calendar (holidays.js)
+// decides for the years it covers; any other year falls back to plain
+// Saturdays/Sundays off. `holiday` marks a named day off (tinted on the
+// calendar), `makeup` a Saturday/Sunday that is a working day (補班).
+function holidayOf(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const weekday = new Date(y, m - 1, d).getDay();
+  const weekend = weekday === 0 || weekday === 6;
+  const entry = typeof TW_HOLIDAYS !== 'undefined' ? TW_HOLIDAYS[dateStr] : null;
+  if (!entry) return { off: weekend, name: '', short: '', holiday: false, makeup: false };
+  const name = entry.name || '';
+  return { off: entry.off, name, short: entry.short || name, holiday: entry.off && !!name, makeup: !entry.off && weekend };
+}
+
 // Seeded once on first launch. Not locked — the user can rename, reorder,
 // archive, or add their own; this is a starting point, not a fixed enum.
 const SEED_CATEGORIES = [
@@ -1455,6 +1471,7 @@ window.Models = {
   localToday,
   validateBackup,
   SEED_CATEGORIES,
+  holidayOf,
   CHART_PALETTE,
   colorDistance,
   colorsTooClose,
