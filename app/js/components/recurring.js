@@ -137,7 +137,7 @@ const RecurringFormModal = {
     },
     async removeCurrent() {
       if (this.isNew) return;
-      if (!confirm('刪除這筆固定支出？已經產生的紀錄不會被刪除。')) return;
+      if (!confirm('刪除這筆固定收支？已經產生的紀錄不會被刪除。')) return;
       await Store.deleteRecurring(this.editingId);
       this.$emit('close');
     },
@@ -145,7 +145,7 @@ const RecurringFormModal = {
   template: `
     <div class="modal-backdrop" @click.self="cancel">
       <div class="modal">
-        <h3>{{ isNew ? '新增固定支出' : '編輯固定支出' }}</h3>
+        <h3>{{ isNew ? '新增固定收支' : '編輯固定收支' }}</h3>
         <div class="modal-body">
           <label>類型
             <select v-model="form.type" :disabled="!isNew">
@@ -286,11 +286,11 @@ const RecurringTransactionsPanel = {
   template: `
     <section class="panel span-2">
       <div class="view-header">
-        <h3>固定支出<span class="muted"> · 每月自動記帳</span></h3>
+        <h3>固定收支<span class="muted"> · 每月自動記帳</span></h3>
         <button class="primary" @click="openNew">+ 新增</button>
       </div>
 
-      <div v-if="rules.length === 0 && loanInstallments.length === 0" class="empty">還沒有固定支出,適合用來記房租、訂閱、保費、薪資這類每月固定發生的項目</div>
+      <div v-if="rules.length === 0 && loanInstallments.length === 0" class="empty">還沒有固定收支,適合用來記薪資、房租、訂閱、保費這類每月固定發生的收入或支出</div>
 
       <div v-for="r in rules" :key="r.id" class="list-row clickable" :class="{ archived: r.isArchived }" @click="openEdit(r)">
         <span class="icon-badge" :style="{ background: (category(r)?.color || '#adb5bd') + '30' }">{{ icon(r) }}</span>

@@ -465,7 +465,7 @@ const AccountsView = {
         return;
       }
       const exportedDate = picked.data.exportedAt ? picked.data.exportedAt.slice(0, 10) : '未知';
-      const msg = `匯入會清空目前所有資料(帳戶、分類、標籤、交易、投資、固定支出、質押、匯率設定),換成這份備份的內容,且無法復原。這份備份的匯出日期:${exportedDate}。確定要匯入嗎？`;
+      const msg = `匯入會清空目前所有資料(帳戶、分類、標籤、交易、投資、固定收支、質押、匯率設定),換成這份備份的內容,且無法復原。這份備份的匯出日期:${exportedDate}。確定要匯入嗎？`;
       if (!confirm(msg)) return;
       this.restoring = true;
       try {

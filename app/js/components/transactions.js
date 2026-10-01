@@ -34,7 +34,20 @@ const TransactionsView = {
       if (monthEnd <= this.todayStr) return [];
       const { recurringTransactions, accounts, pledges } = Store.state;
       return Models.projectedItems({ recurrings: recurringTransactions, accounts, pledges }, this.todayStr, monthEnd)
-        .filter((p) => p.date.startsWith(this.yearMonth));
+        .filter((p) => p.date.startsWith(this.yearMonth))
+        .map((p) => (p.kind === 'loan' ? { ...p, amount: this.loanInstallmentAmounts.get(p.accountId) || 0 } : p));
+    },
+    // Each loan's monthly installment, principal + interest — the same
+    // estimate the 固定收支 panel shows. An equal-payment loan pays the same
+    // each month, so one figure from today's balance serves every month ahead.
+    loanInstallmentAmounts() {
+      const byId = new Map();
+      for (const a of Store.state.accounts) {
+        if (a.kind !== 'loan' || a.loanType === 'pledge' || !a.loanInstallments) continue;
+        const left = a.loanInstallments - a.loanPaidInstallments;
+        if (left > 0) byId.set(a.id, Math.round(Models.installmentBreakdown(Store.accountBalance(a), a.loanRate, left).payment));
+      }
+      return byId;
     },
     projectedByDate() {
       const byDate = new Map();
@@ -44,13 +57,25 @@ const TransactionsView = {
       }
       return byDate;
     },
-    // 本月還有預計: what the rules will still book this month, in TWD.
+    // 本月還有預計: what the rules will still book this month, in TWD, with
+    // loan installments as their own 還款 — only their interest is an expense
+    // in the reports (the principal is a transfer), so folding the whole
+    // payment into 支出 would disagree with 總覽.
     projectedTotals() {
-      const totals = { expense: 0, income: 0 };
+      const totals = { expense: 0, repay: 0, income: 0 };
       for (const p of this.projected) {
         if (p.kind === 'recurring' && (p.type === 'expense' || p.type === 'income')) totals[p.type] += this.projectedBase(p);
+        else if (p.kind === 'loan' && p.amount) totals.repay += this.projectedBase(p);
       }
       return totals;
+    },
+    projectedSummaryParts() {
+      const t = this.projectedTotals;
+      return [
+        t.expense && { label: '支出', text: '-' + this.fmt(t.expense), cls: 'negative' },
+        t.repay && { label: '還款', text: '-' + this.fmt(t.repay), cls: 'negative' },
+        t.income && { label: '收入', text: '+' + this.fmt(t.income), cls: 'positive' },
+      ].filter(Boolean);
     },
     selectedProjected() {
       return this.projectedByDate.get(this.selectedDay) || [];
@@ -138,16 +163,18 @@ const TransactionsView = {
       const items = this.projectedByDate.get(dateStr) || [];
       let expectedExpense = 0;
       let expectedIncome = 0;
+      let expectedRepay = 0;
       let due = null;
       for (const p of items) {
         if (p.kind === 'recurring') {
           if (p.type === 'expense') expectedExpense += this.projectedBase(p);
           else if (p.type === 'income') expectedIncome += this.projectedBase(p);
-        } else if (!due) {
-          due = { card: '💳繳款', loan: '🏦還款', pledge: '📌到期' }[p.kind];
+        } else {
+          if (p.kind === 'loan' && p.amount) expectedRepay += this.projectedBase(p);
+          if (!due) due = { card: '💳繳款', loan: '🏦還款', pledge: '📌到期' }[p.kind];
         }
       }
-      return { expectedExpense, expectedIncome, due };
+      return { expectedExpense, expectedIncome, expectedRepay, due };
     },
     accountNameOf(id) {
       const a = Store.state.accounts.find((x) => x.id === id);
@@ -156,7 +183,9 @@ const TransactionsView = {
     // One line of the selected day's 預計 list: what it is and where from.
     projectedRow(p) {
       if (p.kind === 'card') return { icon: '💳', name: '信用卡繳款', sub: this.accountNameOf(p.accountId), amount: '' };
-      if (p.kind === 'loan') return { icon: '🏦', name: '貸款還款', sub: `${this.accountNameOf(p.accountId)} 第 ${p.installment}/${p.installments} 期`, amount: '' };
+      if (p.kind === 'loan') {
+        return { icon: '🏦', name: '貸款還款', sub: `${this.accountNameOf(p.accountId)} 第 ${p.installment}/${p.installments} 期 · 本金 + 利息(預估)`, amount: p.amount ? '-' + this.fmt(this.projectedBase(p)) : '' };
+      }
       if (p.kind === 'pledge') {
         const name = window.tickerName(p.market, p.ticker);
         return { icon: '📌', name: '質押到期', sub: `${p.ticker}${name ? ' ' + name : ''} · ${this.accountNameOf(p.accountId)}`, amount: '' };
@@ -168,7 +197,7 @@ const TransactionsView = {
       }
       return {
         icon: category ? category.icon : '❔',
-        name: p.note || (category ? category.name : '固定支出'),
+        name: p.note || (category ? category.name : '固定收支'),
         sub: `固定${p.type === 'income' ? '收入' : '支出'} · ${p.type === 'income' ? '存入' : '從'}${from}`,
         amount: (p.type === 'income' ? '+' : '-') + this.fmt(this.projectedBase(p)),
         sign: p.type,
@@ -216,8 +245,8 @@ const TransactionsView = {
           <button @click="shiftMonth(1)">›</button>
         </div>
 
-        <div v-if="projectedTotals.expense || projectedTotals.income" class="projected-summary">
-          本月還有預計:<template v-if="projectedTotals.expense">支出 <span class="negative">-{{ fmt(projectedTotals.expense) }}</span></template><template v-if="projectedTotals.expense && projectedTotals.income"> · </template><template v-if="projectedTotals.income">收入 <span class="positive">+{{ fmt(projectedTotals.income) }}</span></template>
+        <div v-if="projectedSummaryParts.length" class="projected-summary">
+          本月還有預計:<template v-for="(part, i) in projectedSummaryParts" :key="part.label"><template v-if="i"> · </template>{{ part.label }} <span :class="part.cls">{{ part.text }}</span></template>
         </div>
         <div class="calendar-weekdays">
           <span v-for="(w, i) in weekdayLabels" :key="w" :class="{ weekend: i === 0 || i === 6 }">{{ w }}</span>
@@ -238,6 +267,7 @@ const TransactionsView = {
               <div v-if="cell.expectedExpense" class="day-amount expected">-{{ fmt(cell.expectedExpense) }}</div>
               <div v-if="cell.expectedIncome" class="day-amount expected positive">+{{ fmt(cell.expectedIncome) }}</div>
               <div v-if="cell.due" class="day-due">{{ cell.due }}</div>
+              <div v-if="cell.expectedRepay" class="day-amount expected">-{{ fmt(cell.expectedRepay) }}</div>
             </template>
           </div>
         </div>
