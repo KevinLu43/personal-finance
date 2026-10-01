@@ -103,6 +103,7 @@ const AccountRowItem = {
           {{ account.currency }}
           <span v-if="account.isDefault"> · 預設帳戶</span>
           <span v-if="isCredit"> · 額度 {{ creditLimitDisplay }}</span>
+          <span v-if="isCredit && account.paymentDay"> · 每月 {{ account.paymentDay }} 日繳款</span>
           <span v-if="isBrokerage"> · {{ account.market === 'TW' ? '台股' : '美股' }} · 手續費 {{ feeRateDisplay }}%</span>
         </div>
         <div v-if="isPledge" class="list-row-sub">
@@ -280,7 +281,7 @@ const AccountsView = {
       const payable = Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
       const payFrom = payable.find((a) => a.isDefault) || payable[0];
       return {
-        name: '', kind: 'cash', icon: Models.accountIcon({ kind: 'cash' }), color: '#adb5bd', currency: 'TWD', initialBalance: 0, creditLimit: 0,
+        name: '', kind: 'cash', icon: Models.accountIcon({ kind: 'cash' }), color: '#adb5bd', currency: 'TWD', initialBalance: 0, creditLimit: 0, paymentDay: '',
         market: 'TW', feeRate: 0, stockTaxRate: 0, etfTaxRate: 0,
         loanType: 'pledge', loanRate: 0, loanInstallments: 12, loanPaidInstallments: 0,
         loanNextDue: Models.addMonthClamped(today, Number(today.slice(8, 10))), loanPayFromAccountId: payFrom ? payFrom.id : '',
@@ -313,6 +314,7 @@ const AccountsView = {
         currency: account.currency,
         initialBalance: account.initialBalance,
         creditLimit: account.creditLimit || 0,
+        paymentDay: account.paymentDay || '',
         market: account.market || 'TW',
         feeRate: Math.round((account.feeRate || 0) * 1000000) / 10000,
         stockTaxRate: Math.round((account.stockTaxRate || 0) * 1000000) / 10000,
@@ -339,6 +341,7 @@ const AccountsView = {
         currency: this.form.kind === 'brokerage' ? Models.marketCurrency(this.form.market) : this.form.currency || 'TWD',
         initialBalance: Number(this.form.initialBalance) || 0,
         creditLimit: this.form.kind === 'credit_card' ? Number(this.form.creditLimit) || 0 : null,
+        paymentDay: this.form.kind === 'credit_card' && Number(this.form.paymentDay) > 0 ? Math.min(31, Math.round(Number(this.form.paymentDay))) : null,
         market: this.form.kind === 'brokerage' ? this.form.market : null,
         feeRate: this.form.kind === 'brokerage' ? (Number(this.form.feeRate) || 0) / 100 : null,
         stockTaxRate: this.form.kind === 'brokerage' ? (Number(this.form.stockTaxRate) || 0) / 100 : null,
@@ -629,6 +632,10 @@ const AccountsView = {
             </label>
             <label v-if="form.kind === 'credit_card'">信用額度
               <input type="number" v-model="form.creditLimit" />
+            </label>
+            <label v-if="form.kind === 'credit_card'">每月繳款日(選填)
+              <input type="number" min="1" max="31" v-model="form.paymentDay" placeholder="例如 20" />
+              <span class="field-hint">會標在記帳月曆上提醒繳款,不會自動記帳</span>
             </label>
             <label v-if="form.kind === 'loan'">借款類型
               <select v-model="form.loanType">

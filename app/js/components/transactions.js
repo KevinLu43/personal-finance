@@ -27,6 +27,34 @@ const TransactionsView = {
     weekdayLabels() {
       return WEEKDAY_LABELS;
     },
+    // 固定支出 still to run and accounts' due dates, from tomorrow to the end
+    // of the month on screen (Models.projectedItems) — empty for a past month.
+    projected() {
+      const monthEnd = `${this.yearMonth}-31`;
+      if (monthEnd <= this.todayStr) return [];
+      const { recurringTransactions, accounts, pledges } = Store.state;
+      return Models.projectedItems({ recurrings: recurringTransactions, accounts, pledges }, this.todayStr, monthEnd)
+        .filter((p) => p.date.startsWith(this.yearMonth));
+    },
+    projectedByDate() {
+      const byDate = new Map();
+      for (const p of this.projected) {
+        if (!byDate.has(p.date)) byDate.set(p.date, []);
+        byDate.get(p.date).push(p);
+      }
+      return byDate;
+    },
+    // 本月還有預計: what the rules will still book this month, in TWD.
+    projectedTotals() {
+      const totals = { expense: 0, income: 0 };
+      for (const p of this.projected) {
+        if (p.kind === 'recurring' && (p.type === 'expense' || p.type === 'income')) totals[p.type] += this.projectedBase(p);
+      }
+      return totals;
+    },
+    selectedProjected() {
+      return this.projectedByDate.get(this.selectedDay) || [];
+    },
     calendarCells() {
       const firstWeekday = new Date(this.year, this.month - 1, 1).getDay();
       const daysInMonth = new Date(this.year, this.month, 0).getDate();
@@ -40,6 +68,7 @@ const TransactionsView = {
           day: d,
           dateStr,
           holiday: Models.holidayOf(dateStr),
+          ...this.projectedCell(dateStr),
           expense: row.expense,
           income: row.income,
         });
@@ -99,6 +128,53 @@ const TransactionsView = {
       this.year = y;
     },
 
+    // --- Projected (預計) items ---
+    projectedBase(p) {
+      return Store.baseAmountOf({ amount: p.amount, accountId: p.accountId, date: p.date });
+    },
+    // A cell's share of the projection: the rules' expense/income sums, and
+    // the first due date's short tag (a second one shows up in the day's list).
+    projectedCell(dateStr) {
+      const items = this.projectedByDate.get(dateStr) || [];
+      let expectedExpense = 0;
+      let expectedIncome = 0;
+      let due = null;
+      for (const p of items) {
+        if (p.kind === 'recurring') {
+          if (p.type === 'expense') expectedExpense += this.projectedBase(p);
+          else if (p.type === 'income') expectedIncome += this.projectedBase(p);
+        } else if (!due) {
+          due = { card: '💳繳款', loan: '🏦還款', pledge: '📌到期' }[p.kind];
+        }
+      }
+      return { expectedExpense, expectedIncome, due };
+    },
+    accountNameOf(id) {
+      const a = Store.state.accounts.find((x) => x.id === id);
+      return a ? a.name : '';
+    },
+    // One line of the selected day's 預計 list: what it is and where from.
+    projectedRow(p) {
+      if (p.kind === 'card') return { icon: '💳', name: '信用卡繳款', sub: this.accountNameOf(p.accountId), amount: '' };
+      if (p.kind === 'loan') return { icon: '🏦', name: '貸款還款', sub: `${this.accountNameOf(p.accountId)} 第 ${p.installment}/${p.installments} 期`, amount: '' };
+      if (p.kind === 'pledge') {
+        const name = window.tickerName(p.market, p.ticker);
+        return { icon: '📌', name: '質押到期', sub: `${p.ticker}${name ? ' ' + name : ''} · ${this.accountNameOf(p.accountId)}`, amount: '' };
+      }
+      const category = Store.state.categories.find((c) => c.id === p.categoryId);
+      const from = this.accountNameOf(p.accountId);
+      if (p.type === 'transfer') {
+        return { icon: '🔁', name: p.note || '轉帳', sub: `${from} → ${this.accountNameOf(p.toAccountId)}`, amount: this.fmt(p.amount), sign: '' };
+      }
+      return {
+        icon: category ? category.icon : '❔',
+        name: p.note || (category ? category.name : '固定支出'),
+        sub: `固定${p.type === 'income' ? '收入' : '支出'} · ${p.type === 'income' ? '存入' : '從'}${from}`,
+        amount: (p.type === 'income' ? '+' : '-') + this.fmt(this.projectedBase(p)),
+        sign: p.type,
+      };
+    },
+
     // --- Calendar ---
     selectDay(dateStr) {
       this.selectedDay = dateStr;
@@ -140,6 +216,9 @@ const TransactionsView = {
           <button @click="shiftMonth(1)">›</button>
         </div>
 
+        <div v-if="projectedTotals.expense || projectedTotals.income" class="projected-summary">
+          本月還有預計:<template v-if="projectedTotals.expense">支出 <span class="negative">-{{ fmt(projectedTotals.expense) }}</span></template><template v-if="projectedTotals.expense && projectedTotals.income"> · </template><template v-if="projectedTotals.income">收入 <span class="positive">+{{ fmt(projectedTotals.income) }}</span></template>
+        </div>
         <div class="calendar-weekdays">
           <span v-for="(w, i) in weekdayLabels" :key="w" :class="{ weekend: i === 0 || i === 6 }">{{ w }}</span>
         </div>
@@ -156,6 +235,9 @@ const TransactionsView = {
               <div v-if="cell.holiday.short" class="day-holiday">{{ cell.holiday.short }}</div>
               <div v-if="cell.expense" class="day-amount negative">-{{ fmt(cell.expense) }}</div>
               <div v-if="cell.income" class="day-amount positive">+{{ fmt(cell.income) }}</div>
+              <div v-if="cell.expectedExpense" class="day-amount expected">-{{ fmt(cell.expectedExpense) }}</div>
+              <div v-if="cell.expectedIncome" class="day-amount expected positive">+{{ fmt(cell.expectedIncome) }}</div>
+              <div v-if="cell.due" class="day-due">{{ cell.due }}</div>
             </template>
           </div>
         </div>
@@ -169,6 +251,17 @@ const TransactionsView = {
         </div>
         <div v-if="selectedHoliday.name" class="selected-day-holiday" :class="{ off: selectedHoliday.off }">{{ selectedHoliday.name }}</div>
 
+        <div v-if="selectedProjected.length" class="subsection projected-list">
+          <div class="subsection-header"><span>預計 · 到期當天自動記帳</span></div>
+          <div v-for="p in selectedProjected" :key="p.key" class="list-row">
+            <span class="icon-badge-sm">{{ projectedRow(p).icon }}</span>
+            <div class="list-row-main">
+              <div class="list-row-title">{{ projectedRow(p).name }}</div>
+              <div class="list-row-sub">{{ projectedRow(p).sub }}</div>
+            </div>
+            <div class="list-row-amount projected-amount" :class="projectedRow(p).sign === 'income' ? 'positive' : ''">{{ projectedRow(p).amount }}</div>
+          </div>
+        </div>
         <div v-if="selectedDayTransactions.length === 0" class="empty">這天還沒有紀錄</div>
 
         <template v-else>

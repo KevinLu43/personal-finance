@@ -242,6 +242,9 @@ function newAccount(fields) {
     currency: isBrokerage ? marketCurrency(fields.market) : fields.currency || 'TWD',
     initialBalance: fields.initialBalance || 0,
     creditLimit: fields.kind === 'credit_card' ? (fields.creditLimit || 0) : null,
+    // A credit card's monthly 繳款日 (day of month, 1-31), optional — only
+    // used to mark the calendar, nothing is booked from it.
+    paymentDay: fields.kind === 'credit_card' ? (Number(fields.paymentDay) || null) : null,
     // A brokerage (證券交割) account settles trades in exactly one market —
     // real settlement accounts work this way (a TW securities account and a
     // 複委託 US account are never the same account number) — and carries its
@@ -1276,6 +1279,63 @@ function dueOccurrences(recurring, todayStr) {
   return { dates, nextDueDate: cursor, remainingOccurrences: remaining };
 }
 
+// What the 記帳 calendar shows as still to come, after `fromDate` (normally
+// today) up to and including `toDate`: every future run of a 固定支出 rule
+// (its amount is known), and the due dates accounts carry — a credit card's
+// monthly 繳款日, a loan installment, a pledge's maturity. Those three carry
+// no amount: a card's bill isn't known until it closes, and a loan's split
+// depends on the balance on the day. Nothing here is booked; the real
+// transaction still only appears when Store.bookDueItems books it.
+function projectedItems({ recurrings, accounts, pledges }, fromDate, toDate) {
+  const items = [];
+  const pad = (n) => String(n).padStart(2, '0');
+  for (const r of recurrings) {
+    if (r.isArchived || !r.nextDueDate) continue;
+    let cursor = r.nextDueDate;
+    let remaining = r.remainingOccurrences == null ? null : r.remainingOccurrences;
+    for (let guard = 0; cursor <= toDate && (remaining == null || remaining > 0) && guard < 60; guard++) {
+      if (cursor > fromDate) {
+        items.push({
+          key: `rec:${r.id}:${cursor}`, date: cursor, kind: 'recurring', type: r.type, amount: r.amount,
+          accountId: r.accountId, toAccountId: r.toAccountId, categoryId: r.categoryId, note: r.note,
+        });
+      }
+      if (remaining != null) remaining -= 1;
+      cursor = addMonthClamped(cursor, r.anchorDay);
+    }
+  }
+  for (const a of accounts) {
+    if (a.isArchived) continue;
+    if (a.kind === 'credit_card' && a.paymentDay >= 1) {
+      let [y, m] = fromDate.slice(0, 7).split('-').map(Number);
+      for (let guard = 0; guard < 120; guard++) {
+        const date = `${y}-${pad(m)}-${pad(Math.min(a.paymentDay, new Date(y, m, 0).getDate()))}`;
+        if (date > toDate) break;
+        if (date > fromDate) items.push({ key: `card:${a.id}:${date}`, date, kind: 'card', accountId: a.id });
+        m += 1;
+        if (m > 12) { m = 1; y += 1; }
+      }
+    }
+    if (a.kind === 'loan' && a.loanType !== 'pledge' && a.loanNextDue && a.loanInstallments > a.loanPaidInstallments) {
+      const anchorDay = Number(a.loanNextDue.slice(8, 10));
+      let cursor = a.loanNextDue;
+      for (let n = a.loanPaidInstallments; cursor <= toDate && n < a.loanInstallments; n++) {
+        if (cursor > fromDate) {
+          items.push({ key: `loan:${a.id}:${cursor}`, date: cursor, kind: 'loan', accountId: a.id, installment: n + 1, installments: a.loanInstallments });
+        }
+        cursor = addMonthClamped(cursor, anchorDay);
+      }
+    }
+  }
+  for (const p of pledges) {
+    if (p.isReleased || p.isDeleted || !p.maturity) continue;
+    if (p.maturity > fromDate && p.maturity <= toDate) {
+      items.push({ key: `pledge:${p.id}`, date: p.maturity, kind: 'pledge', accountId: p.loanAccountId, market: p.market, ticker: p.ticker });
+    }
+  }
+  return items.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+}
+
 // Actual fixed spending per month of one 'YYYY' year, Jan–Dec — what the
 // year view's 固定支出 chart plots, in two parts: `amount`, the expense
 // transactions a recurring rule generated (recurringId), and `loanAmount`,
@@ -1471,6 +1531,7 @@ window.Models = {
   localToday,
   validateBackup,
   SEED_CATEGORIES,
+  projectedItems,
   holidayOf,
   CHART_PALETTE,
   colorDistance,
