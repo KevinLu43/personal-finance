@@ -505,6 +505,31 @@ body {
   max-width: 100%;
 }
 .calendar-day.makeup .day-holiday { color: var(--muted); }
+
+/* 預計: a 固定支出 that hasn't run yet reads as a muted amount with a dashed
+   underline (a full box would cost the width a cell doesn't have), a due
+   date (信用卡繳款, 貸款還款, 質押到期) as a short amber tag. */
+.calendar-day .day-amount.expected {
+  color: var(--muted);
+  border-bottom: 1px dashed var(--muted);
+}
+.calendar-day .day-amount.expected.positive { color: var(--income); border-color: var(--income); }
+.calendar-day .day-due {
+  font-size: 9px;
+  line-height: 1.3;
+  color: var(--warning);
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
+.calendar-day.selected .day-amount.expected { color: white; border-color: rgba(255, 255, 255, 0.7); }
+.calendar-day.selected .day-due { color: #ffe3b3; }
+.projected-summary { font-size: 12px; color: var(--muted); margin: -6px 0 10px; text-align: center; }
+.projected-summary .negative { color: var(--expense); }
+.projected-summary .positive { color: var(--income); }
+.projected-list .list-row-title { color: var(--muted); }
+.projected-amount { color: var(--muted); }
+.projected-amount.positive { color: var(--income); }
 .calendar-day.selected,
 .calendar-day.holiday.selected { background: var(--accent); }
 .calendar-day.selected.off .day-num,
