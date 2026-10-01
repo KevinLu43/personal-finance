@@ -1059,6 +1059,42 @@ button.primary {
     align-items: start;
   }
   .panel-grid .span-2 { grid-column: 1 / -1; }
+
+  /* 投資總覽: the two whole-portfolio summaries (資產配置, 已實現績效) sit side
+     by side; below the tabs, the holdings list — the page's main content —
+     takes the wider left column the full way down, and 持股比例 with 交易明細
+     stack on the right, so the trades never sit alone beside an empty column.
+     `auto 1fr` rows keep 交易明細 right under the donut however long the
+     holdings list runs. Phones keep the plain one-column order. */
+  .overview-summary { margin-bottom: 16px; }
+  .holdings-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-rows: auto 1fr;
+  }
+  .holdings-grid .holdings-list { grid-column: 1; grid-row: 1 / span 2; }
+  .holdings-grid .holdings-donut { grid-column: 2; grid-row: 1; }
+  .holdings-grid .holdings-trades { grid-column: 2; grid-row: 2; }
+  .holdings-grid.no-donut .holdings-trades { grid-row: 1 / span 2; }
+  .holdings-grid.no-holdings .holdings-trades { grid-column: 1 / -1; grid-row: auto; }
+
+  /* 記帳: the calendar takes the wider left column with 固定收支 under it —
+     neither moves when another day is picked — and the selected day's records
+     run down the right, instead of a short day panel beside the calendar and
+     固定收支 stretched across the whole page underneath. */
+  .ledger-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-rows: auto 1fr;
+  }
+  .ledger-grid .ledger-calendar { grid-column: 1; grid-row: 1; }
+  .ledger-grid .ledger-recurring { grid-column: 1; grid-row: 2; }
+  .ledger-grid .ledger-day { grid-column: 2; grid-row: 1 / span 2; }
+
+  /* A desktop calendar cell is several times a phone's, so its text can
+     afford to be read without leaning in. */
+  .calendar-day .day-num { font-size: 13px; }
+  .calendar-day .day-amount,
+  .calendar-day .day-holiday,
+  .calendar-day .day-due { font-size: 11px; }
 }
 
 @media (hover: hover) and (min-width: 768px) {

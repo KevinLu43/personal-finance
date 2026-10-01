@@ -236,9 +236,9 @@ const TransactionsView = {
         <button class="primary" @click="openNew()">+ 新增</button>
       </div>
 
-      <div class="panel-grid">
+      <div class="panel-grid ledger-grid">
       <!-- Left (top on mobile): the calendar -->
-      <section class="panel">
+      <section class="panel ledger-calendar">
         <div class="month-nav">
           <button @click="shiftMonth(-1)">‹</button>
           <span class="month-label">{{ year }} 年 {{ month }} 月</span>
@@ -273,8 +273,8 @@ const TransactionsView = {
         </div>
       </section>
 
-      <!-- Right (bottom on mobile): the selected day's records, split by expense/income/transfer -->
-      <section class="panel">
+      <!-- Right (below the calendar on mobile): the selected day's records, split by expense/income/transfer -->
+      <section class="panel ledger-day">
         <div class="view-header">
           <h3>{{ selectedDay }}</h3>
           <button class="primary" @click="openNew(selectedDay)">+ 新增</button>
@@ -328,7 +328,7 @@ const TransactionsView = {
         </template>
       </section>
 
-      <RecurringTransactionsPanel />
+      <RecurringTransactionsPanel class="ledger-recurring" />
       </div>
 
       <TransactionFormModal
