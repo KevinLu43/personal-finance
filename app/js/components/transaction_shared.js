@@ -125,10 +125,15 @@ const LoanPaymentRow = {
     return { open: false };
   },
   computed: {
+    loan() {
+      return Store.state.accounts.find((a) => a.id === this.payment.loanId) || null;
+    },
+    loanIcon() {
+      return this.loan ? Models.accountIcon(this.loan) : '🏦';
+    },
     title() {
       if (this.payment.label) return this.payment.label;
-      const loan = Store.state.accounts.find((a) => a.id === this.payment.loanId);
-      return loan ? loan.name : '貸款還款';
+      return this.loan ? this.loan.name : '貸款還款';
     },
   },
   methods: {
@@ -139,7 +144,7 @@ const LoanPaymentRow = {
   template: `
     <div>
       <div class="list-row clickable" @click="open = !open">
-        <span class="icon-badge" style="background: #e09f3e30;">🏦</span>
+        <span class="icon-badge" :style="{ background: ((loan && loan.color) || '#e09f3e') + '30' }">{{ loanIcon }}</span>
         <div class="list-row-main">
           <div class="list-row-title">{{ title }}</div>
           <div class="list-row-sub">本金 {{ fmt(payment.principal) }} + 利息 {{ fmt(payment.interest) }}</div>

@@ -95,6 +95,35 @@ function holidayOf(dateStr) {
   return { off: entry.off, name, short: entry.short || name, holiday: entry.off && !!name, makeup: !entry.off && weekend };
 }
 
+// Palette swatches (gray aside) not close to any colour in `usedColors` —
+// what the colour field suggests when a pick is too close to a sibling's.
+function suggestColors(usedColors) {
+  const used = usedColors.filter(Boolean);
+  return CHART_PALETTE.slice(0, -1).filter((c) => !used.some((u) => colorsTooClose(u, c.color)));
+}
+
+// 一鍵重新配色: a fresh colour for every active category, per kind in the
+// operator's own order. 其他-style rows (a name starting 其他) go back to
+// gray; the rest take CHART_PALETTE's distinct colours in turn, reused from
+// the start past nine — by then a category is usually small enough to fold
+// into a donut's 其他 slice anyway. Returns { category, from, to } rows.
+function recolorPlan(categories) {
+  const gray = CHART_PALETTE[CHART_PALETTE.length - 1].color;
+  const colors = CHART_PALETTE.slice(0, -1).map((c) => c.color);
+  const plan = [];
+  for (const kind of ['expense', 'income']) {
+    let next = 0;
+    categories
+      .filter((c) => c.kind === kind && !c.isArchived)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .forEach((category) => {
+        const to = category.name.startsWith('其他') ? gray : colors[next++ % colors.length];
+        plan.push({ category, from: (category.color || gray).toLowerCase(), to });
+      });
+  }
+  return plan;
+}
+
 // Seeded once on first launch. Not locked — the user can rename, reorder,
 // archive, or add their own; this is a starting point, not a fixed enum.
 const SEED_CATEGORIES = [
@@ -1346,7 +1375,7 @@ function projectedItems({ recurrings, accounts, pledges }, fromDate, toDate) {
 function monthlyFixedExpense(transactions, year) {
   const months = [];
   for (let m = 1; m <= 12; m++) {
-    months.push({ month: m, yearMonth: `${year}-${String(m).padStart(2, '0')}`, amount: 0, loanAmount: 0, byCategory: new Map() });
+    months.push({ month: m, yearMonth: `${year}-${String(m).padStart(2, '0')}`, amount: 0, loanAmount: 0, byCategory: new Map(), byLoan: new Map() });
   }
   const byMonth = new Map(months.map((row) => [row.yearMonth, row]));
   for (const t of transactions) {
@@ -1355,6 +1384,7 @@ function monthlyFixedExpense(transactions, year) {
     if (!row) continue;
     if (t.loanId) {
       row.loanAmount += t.amount;
+      row.byLoan.set(t.loanId, (row.byLoan.get(t.loanId) || 0) + t.amount);
     } else if (t.type === 'expense' && t.recurringId) {
       row.amount += t.amount;
       // Which category each recurring rule's spending actually belongs to —
@@ -1413,13 +1443,15 @@ function fixedExpenseBreakdown(transactions, prefix, categories, accounts) {
 // charts use: rule spending at the bottom of each month's bar, loan payments
 // stacked on top. Every value is >= 0, so the baseline is the bottom edge.
 // Stacks each month's 固定支出 by the category its recurring rule was
-// recorded under, loan payments kept as their own "貸款" segment on top
-// (repaying debt isn't itself a spending category). Ranked by the year's
+// recorded under, with each loan's payments as its own segment on top, in
+// that loan account's name and colour — the same colour the month view's
+// donut and the 帳戶 page give it (repaying debt isn't itself a spending
+// category). A loan series carries its `loanId`. Ranked by the year's
 // total so the biggest categories keep a stable color across every month's
 // bar; anything past the top 5 folds into "其他" so the legend can't grow
 // past a handful of entries no matter how many different rules exist.
 const FIXED_EXPENSE_MAX_CATEGORY_SERIES = 5;
-function buildFixedExpenseChart(months, categories = []) {
+function buildFixedExpenseChart(months, categories = [], accounts = []) {
   const yearTotals = new Map();
   for (const m of months) {
     for (const [key, amount] of m.byCategory) yearTotals.set(key, (yearTotals.get(key) || 0) + amount);
@@ -1435,8 +1467,14 @@ function buildFixedExpenseChart(months, categories = []) {
   if (hasOther) {
     series.push({ key: '__other__', name: '其他', color: '#8a8a8a', total: ranked.slice(FIXED_EXPENSE_MAX_CATEGORY_SERIES).reduce((s, [, v]) => s + v, 0) });
   }
-  const loanTotal = months.reduce((s, m) => s + m.loanAmount, 0);
-  series.push({ key: '__loan__', name: '貸款', color: '#e09f3e', total: loanTotal });
+  const loanTotals = new Map();
+  for (const m of months) {
+    for (const [loanId, amount] of m.byLoan) loanTotals.set(loanId, (loanTotals.get(loanId) || 0) + amount);
+  }
+  for (const [loanId, total] of [...loanTotals.entries()].sort((a, b) => b[1] - a[1])) {
+    const loan = accounts.find((a) => a.id === loanId);
+    series.push({ key: 'loan:' + loanId, loanId, name: loan ? loan.name : '貸款', color: (loan && loan.color) || '#e09f3e', total });
+  }
 
   const maxValue = Math.max(1, ...months.map((m) => m.amount + m.loanAmount));
   const colWidth = 300 / months.length;
@@ -1445,7 +1483,7 @@ function buildFixedExpenseChart(months, categories = []) {
     let cursorY = 100;
     const segments = series.map((s) => {
       let amount;
-      if (s.key === '__loan__') amount = m.loanAmount;
+      if (s.loanId) amount = m.byLoan.get(s.loanId) || 0;
       else if (s.key === '__other__') amount = [...m.byCategory.entries()].filter(([key]) => !topKeySet.has(key)).reduce((sum, [, v]) => sum + v, 0);
       else amount = m.byCategory.get(s.key) || 0;
       const height = (amount / maxValue) * 100;
@@ -1537,6 +1575,8 @@ window.Models = {
   colorDistance,
   colorsTooClose,
   pickUnusedColor,
+  suggestColors,
+  recolorPlan,
   buildBackup,
   newAccount,
   accountIcon,

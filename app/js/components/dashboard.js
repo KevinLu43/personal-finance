@@ -344,24 +344,24 @@ const DashboardView = {
       return Store.monthlyFixedExpense(this.year);
     },
     fixedExpenseChart() {
-      return Models.buildFixedExpenseChart(this.yearlyFixedExpenseMonths, Store.state.categories);
+      return Models.buildFixedExpenseChart(this.yearlyFixedExpenseMonths, Store.state.categories, Store.state.accounts);
     },
     recurringExpenseYearTotal() {
       return this.yearlyFixedExpenseMonths.reduce((sum, m) => sum + m.amount, 0);
     },
     // What 固定支出's chart reads out when a month is picked: that month's
     // total plus its breakdown, split the same way the chart's own bars and
-    // legend are (top categories, then 其他, then 貸款) so the numbers under
+    // legend are (top categories, then 其他, then each loan) so the numbers under
     // a bar always match the colors in it.
     fixedExpenseReadout() {
       const i = this.fixedExpensePick;
       const m = i === null ? null : this.yearlyFixedExpenseMonths[i];
       if (!m) return null;
-      const topKeys = new Set(this.fixedExpenseChart.series.filter((s) => s.key !== '__other__' && s.key !== '__loan__').map((s) => s.key));
+      const topKeys = new Set(this.fixedExpenseChart.series.filter((s) => s.key !== '__other__' && !s.loanId).map((s) => s.key));
       const parts = this.fixedExpenseChart.series
         .map((s) => {
           let amount;
-          if (s.key === '__loan__') amount = m.loanAmount;
+          if (s.loanId) amount = m.byLoan.get(s.loanId) || 0;
           else if (s.key === '__other__') amount = [...m.byCategory.entries()].filter(([key]) => !topKeys.has(key)).reduce((sum, [, v]) => sum + v, 0);
           else amount = m.byCategory.get(s.key) || 0;
           return { key: s.key, name: s.name, color: s.color, amount };
