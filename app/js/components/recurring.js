@@ -234,7 +234,7 @@ const RecurringTransactionsPanel = {
         .map((a) => {
           const left = a.loanInstallments - a.loanPaidInstallments;
           const b = Models.installmentBreakdown(Store.accountBalance(a), a.loanRate, left);
-          return { account: a, left, payment: Math.round(b.payment), day: Number(a.loanNextDue.slice(8, 10)), overdue: a.loanNextDue < today };
+          return { account: a, icon: Models.accountIcon(a), left, payment: Math.round(b.payment), day: Number(a.loanNextDue.slice(8, 10)), overdue: a.loanNextDue < today };
         })
         .filter((row) => row.left > 0);
     },
@@ -310,7 +310,7 @@ const RecurringTransactionsPanel = {
         <span>貸款分期</span><span class="muted">在「帳戶」頁設定</span>
       </div>
       <div v-for="row in loanInstallments" :key="row.account.id" class="list-row">
-        <span class="icon-badge" style="background: #e09f3e30;">🏦</span>
+        <span class="icon-badge" :style="{ background: (row.account.color || '#e09f3e') + '30' }">{{ row.icon }}</span>
         <div class="list-row-main">
           <div class="list-row-title">{{ row.account.name }}</div>
           <div class="list-row-sub">每月 {{ row.day }} 日 · 下次 {{ row.account.loanNextDue }} · 剩 {{ row.left }} 期(本金＋利息)</div>
