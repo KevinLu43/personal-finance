@@ -95,6 +95,35 @@ function holidayOf(dateStr) {
   return { off: entry.off, name, short: entry.short || name, holiday: entry.off && !!name, makeup: !entry.off && weekend };
 }
 
+// Palette swatches (gray aside) not close to any colour in `usedColors` —
+// what the colour field suggests when a pick is too close to a sibling's.
+function suggestColors(usedColors) {
+  const used = usedColors.filter(Boolean);
+  return CHART_PALETTE.slice(0, -1).filter((c) => !used.some((u) => colorsTooClose(u, c.color)));
+}
+
+// 一鍵重新配色: a fresh colour for every active category, per kind in the
+// operator's own order. 其他-style rows (a name starting 其他) go back to
+// gray; the rest take CHART_PALETTE's distinct colours in turn, reused from
+// the start past nine — by then a category is usually small enough to fold
+// into a donut's 其他 slice anyway. Returns { category, from, to } rows.
+function recolorPlan(categories) {
+  const gray = CHART_PALETTE[CHART_PALETTE.length - 1].color;
+  const colors = CHART_PALETTE.slice(0, -1).map((c) => c.color);
+  const plan = [];
+  for (const kind of ['expense', 'income']) {
+    let next = 0;
+    categories
+      .filter((c) => c.kind === kind && !c.isArchived)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .forEach((category) => {
+        const to = category.name.startsWith('其他') ? gray : colors[next++ % colors.length];
+        plan.push({ category, from: (category.color || gray).toLowerCase(), to });
+      });
+  }
+  return plan;
+}
+
 // Seeded once on first launch. Not locked — the user can rename, reorder,
 // archive, or add their own; this is a starting point, not a fixed enum.
 const SEED_CATEGORIES = [
@@ -1537,6 +1566,8 @@ window.Models = {
   colorDistance,
   colorsTooClose,
   pickUnusedColor,
+  suggestColors,
+  recolorPlan,
   buildBackup,
   newAccount,
   accountIcon,

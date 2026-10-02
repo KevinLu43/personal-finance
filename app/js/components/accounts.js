@@ -152,13 +152,18 @@ const AccountsView = {
   },
   computed: {
     sync() { return window.SyncInfo; },
-    // The accounts an account's colour sits beside (a credit card's slice in
-    // 信用卡欠款, say): the same kind, not archived, not the one being edited.
-    colorSiblings() {
+    // The other accounts of the same kind, not archived, not the one being
+    // edited — a new account starts on a colour none of them wears.
+    sameKindAccounts() {
       if (!this.editingId || !this.form) return [];
       return Store.state.accounts
         .filter((a) => a.kind === this.form.kind && !a.isArchived && a.id !== this.editingId)
         .map((a) => ({ name: a.name, color: a.color }));
+    },
+    // Only credit cards share a chart (信用卡欠款 / 刷卡), so only they are
+    // checked for a colour too close to a sibling's.
+    colorSiblings() {
+      return this.form && this.form.kind === 'credit_card' ? this.sameKindAccounts : [];
     },
     feedbackUrl() { return (window.APP_CONFIG && window.APP_CONFIG.feedbackUrl) || ''; },
     accounts() {
@@ -300,7 +305,7 @@ const AccountsView = {
         stockTaxRate: Math.round(defaults.stockTaxRate * 1000000) / 10000,
         etfTaxRate: Math.round(defaults.etfTaxRate * 1000000) / 10000,
       };
-      this.form.color = Models.pickUnusedColor(this.colorSiblings.map((a) => a.color));
+      this.form.color = Models.pickUnusedColor(this.sameKindAccounts.map((a) => a.color));
     },
     openEdit(account) {
       this.editingId = account.id;

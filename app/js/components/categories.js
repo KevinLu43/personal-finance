@@ -7,9 +7,16 @@ const CategoriesView = {
       form: this.blankForm(),
       labelEditingId: null,
       labelForm: this.blankLabelForm(),
+      recolor: null, // 重新配色's preview rows while its dialog is open
     };
   },
   computed: {
+    Models() {
+      return window.Models;
+    },
+    Store() {
+      return window.Store;
+    },
     expenseCategories() {
       return Store.state.categories
         .filter((c) => c.kind === 'expense')
@@ -31,11 +38,15 @@ const CategoriesView = {
         .filter((c) => c.kind === this.form.kind && !c.isArchived && c.id !== this.editingId)
         .map((c) => ({ name: c.name, color: c.color }));
     },
-    labelColorSiblings() {
-      if (!this.labelEditingId) return [];
-      return Store.state.labels
-        .filter((l) => !l.isArchived && l.id !== this.labelEditingId)
-        .map((l) => ({ name: l.name, color: l.color }));
+    recolorGroups() {
+      if (!this.recolor) return [];
+      return [
+        { label: '支出分類', rows: this.recolor.filter((r) => r.category.kind === 'expense') },
+        { label: '收入分類', rows: this.recolor.filter((r) => r.category.kind === 'income') },
+      ].filter((g) => g.rows.length);
+    },
+    recolorChangedCount() {
+      return this.recolor ? this.recolor.filter((r) => r.from !== r.to).length : 0;
     },
   },
   methods: {
@@ -60,6 +71,12 @@ const CategoriesView = {
     },
     cancel() {
       this.editingId = null;
+    },
+    async applyRecolor() {
+      for (const row of this.recolor) {
+        if (row.from !== row.to) await Store.updateCategory(row.category.id, { color: row.to });
+      }
+      this.recolor = null;
     },
     async save() {
       if (!this.form.name.trim()) return;
@@ -138,7 +155,7 @@ const CategoriesView = {
   },
   template: `
     <div class="view">
-      <div class="view-header"><h2>分類</h2></div>
+      <div class="view-header"><h2>分類</h2><button @click="recolor = Models.recolorPlan(Store.state.categories)">重新配色</button></div>
 
       <div class="panel-grid">
       <section class="panel">
@@ -241,11 +258,35 @@ const CategoriesView = {
           <div class="modal-body">
             <label>名稱 <input v-model="labelForm.name" placeholder="例如：固定支出" /></label>
             <label>圖示 <IconPickerField v-model="labelForm.icon" /></label>
-            <div class="field-group">顏色 <ColorPickerField v-model="labelForm.color" :others="labelColorSiblings" /></div>
+            <div class="field-group">顏色 <ColorPickerField v-model="labelForm.color" /></div>
           </div>
           <div class="modal-actions">
             <button @click="cancelLabel">取消</button>
             <button class="primary" @click="saveLabel">儲存</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="recolor" class="modal-backdrop" @click.self="recolor = null">
+        <div class="modal">
+          <h3>重新配色</h3>
+          <div class="modal-body">
+            <p class="field-hint">依照目前的排列順序,從色票重新分配分類顏色,讓圓餅圖上的分類更好分辨。「其他」維持灰色。只改顏色,不影響任何紀錄。</p>
+            <template v-for="group in recolorGroups" :key="group.label">
+              <div class="subsection-header"><span>{{ group.label }}</span></div>
+              <div v-for="row in group.rows" :key="row.category.id" class="recolor-row">
+                <span class="icon-badge-sm" :style="{ background: row.to + '30' }">{{ row.category.icon }}</span>
+                <span class="bar-name">{{ row.category.name }}</span>
+                <span class="recolor-swatch" :style="{ background: row.from }"></span>
+                <span class="muted">→</span>
+                <span class="recolor-swatch" :style="{ background: row.to }"></span>
+                <span class="recolor-note muted">{{ row.from === row.to ? '不變' : '' }}</span>
+              </div>
+            </template>
+          </div>
+          <div class="modal-actions">
+            <button @click="recolor = null">取消</button>
+            <button class="primary" :disabled="recolorChangedCount === 0" @click="applyRecolor">套用({{ recolorChangedCount }})</button>
           </div>
         </div>
       </div>
