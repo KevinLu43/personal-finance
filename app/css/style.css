@@ -379,17 +379,27 @@ body {
   vector-effect: non-scaling-stroke;
 }
 
+/* 收支與淨值趨勢: income and expense as bars or (toggled) as solid lines,
+   never both; 結餘 dashed, each line with its own marker shape (round,
+   square, small round) so the three never rely on colour alone. */
+.trend-flow-line,
 .trend-net-line {
   fill: none;
-  stroke: var(--accent);
   stroke-width: 2;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
-
-.trend-net-dot {
-  fill: var(--accent);
-  vector-effect: non-scaling-stroke;
-}
+.trend-bar.income { fill: var(--income); opacity: 0.85; }
+.trend-bar.expense { fill: var(--expense); opacity: 0.85; }
+.trend-flow-line.income { stroke: var(--income); }
+.trend-flow-line.expense { stroke: var(--expense); }
+.trend-net-line { stroke: var(--accent); stroke-dasharray: 5 4; stroke-width: 1.5; }
+.trend-marker { vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-width: 7; }
+.trend-marker.income { stroke: var(--income); }
+.trend-marker.expense { stroke: var(--expense); stroke-linecap: square; stroke-width: 6; }
+.trend-marker.net { stroke: var(--accent); stroke-width: 5; }
+.legend-dot.square { border-radius: 1px; }
+.legend-line { width: 14px; height: 0; border-top: 2px dashed var(--accent); }
 
 .trend-labels {
   display: flex;
@@ -1165,6 +1175,11 @@ button.primary {
 .trend-pick { fill: var(--accent); opacity: 0.1; pointer-events: none; }
 .trend-labels span { cursor: pointer; }
 .trend-labels span.picked { font-weight: 700; }
+.trend-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.trend-toolbar .trend-readout { flex: 1; }
+.trend-style-toggle { display: inline-flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin-top: 2px; }
+.trend-style-toggle button { border: none; background: none; padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.trend-style-toggle button.active { background: var(--accent); color: white; }
 .trend-readout { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; min-height: 20px; margin: 4px 0; }
 .trend-readout.empty { color: var(--muted); font-size: 12px; }
 

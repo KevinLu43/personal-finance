@@ -834,37 +834,54 @@ function labelBreakdown(expenseTransactions, transactionLabels, labels) {
 // overview's 12-month chart, so both read the same shape off one function
 // rather than keeping their own copies of the same arithmetic.
 //
-// Bars (income/expense, always >= 0) and the net line (which can dip
-// negative) share one coordinate space: minValue drops below 0 only when
-// some month's net actually did, so the baseline sits at the very bottom
-// in the common case and only rises to make room once a month needs it.
-function buildTrendChart(months) {
-  const values = months.flatMap((m) => [m.income, m.expense, m.net]);
+// Income and expense come as either a pair of bars per month (expense left
+// of the column's centre, income right) or a point each at the centre for
+// the line view; the dashboard draws one or the other, never both. The net
+// line runs through the centre either way. minValue drops below 0 only when some
+// month's net actually did, so the zero line sits at the very bottom in the
+// common case and only rises to make room once a month needs it.
+// Months after `lastYearMonth` (the rest of this year, in year view) keep
+// their column but get no point — a line dropping to 0 there would read as
+// income stopping, not as months that haven't happened yet.
+function buildTrendChart(months, lastYearMonth = '9999-12') {
+  const shown = months.filter((m) => m.yearMonth <= lastYearMonth);
+  const values = shown.flatMap((m) => [m.income, m.expense, m.net]);
   const maxValue = Math.max(1, ...values);
   const minValue = Math.min(0, ...values);
   const range = maxValue - minValue || 1;
   const colWidth = 300 / months.length;
-  const barWidth = colWidth * 0.28;
+  const barWidth = colWidth * 0.3;
   const y = (v) => 100 - ((v - minValue) / range) * 100;
   const baselineY = y(0);
   const bars = months.map((m, i) => {
-    const colCenter = colWidth * i + colWidth / 2;
-    const expenseY = y(m.expense);
+    const x = colWidth * i + colWidth / 2;
     const incomeY = y(m.income);
+    const expenseY = y(m.expense);
     return {
       yearMonth: m.yearMonth,
       month: m.month,
-      expenseX: colCenter - barWidth - 2,
-      expenseY: Math.min(expenseY, baselineY),
+      x,
+      future: m.yearMonth > lastYearMonth,
+      expenseBarX: x - barWidth - 1,
+      expenseY,
+      expenseBarY: Math.min(expenseY, baselineY),
       expenseH: Math.abs(baselineY - expenseY),
-      incomeX: colCenter + 2,
-      incomeY: Math.min(incomeY, baselineY),
+      incomeBarX: x + 1,
+      incomeY,
+      incomeBarY: Math.min(incomeY, baselineY),
       incomeH: Math.abs(baselineY - incomeY),
-      netX: colCenter,
       netY: y(m.net),
     };
   });
-  return { bars, barWidth, baselineY, netPoints: bars.map((b) => `${b.netX},${b.netY}`).join(' ') };
+  const line = (xKey, yKey) => bars.filter((b) => !b.future).map((b) => `${b[xKey]},${b[yKey]}`).join(' ');
+  return {
+    bars,
+    barWidth,
+    baselineY,
+    incomePoints: line('x', 'incomeY'),
+    expensePoints: line('x', 'expenseY'),
+    netPoints: line('x', 'netY'),
+  };
 }
 
 // A ring built from stacked circle strokes: each row gets a dash whose
@@ -1209,16 +1226,17 @@ function netWorthTrend(accounts, transactions, investments, endYearMonth, monthC
 // 0 — net worth is usually a large number far from 0, so pinning the
 // baseline there would flatten the line into something barely readable.
 // Points sit at the center of per-month columns, exactly where
-// buildTrendChart centers its bars, so the two charts can share one month axis.
-function buildNetWorthChart(months) {
-  const values = months.map((m) => m.netWorth);
+// buildTrendChart centers its points, so the two charts can share one month
+// axis — and, like it, nothing is drawn past `lastYearMonth`.
+function buildNetWorthChart(months, lastYearMonth = '9999-12') {
+  const values = months.filter((m) => m.yearMonth <= lastYearMonth).map((m) => m.netWorth);
   const maxValue = Math.max(...values);
   const minValue = Math.min(...values);
   const range = maxValue - minValue || 1;
   const colWidth = 300 / months.length;
   const y = (v) => 100 - ((v - minValue) / range) * 100;
-  const dots = months.map((m, i) => ({ x: colWidth * i + colWidth / 2, y: y(m.netWorth), yearMonth: m.yearMonth, month: m.month }));
-  return { points: dots.map((d) => `${d.x},${d.y}`).join(' '), dots };
+  const dots = months.map((m, i) => ({ x: colWidth * i + colWidth / 2, y: y(m.netWorth), yearMonth: m.yearMonth, month: m.month, future: m.yearMonth > lastYearMonth }));
+  return { points: dots.filter((d) => !d.future).map((d) => `${d.x},${d.y}`).join(' '), dots };
 }
 
 // One row per monthly recurring rule (rent, subscriptions, salary, ...):

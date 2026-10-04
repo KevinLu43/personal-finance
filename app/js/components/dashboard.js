@@ -121,6 +121,17 @@ const LabelDetail = {
   `,
 };
 
+// The trend chart's 長條/折線 choice is a per-device viewing preference, kept
+// in this browser only (the chart still works when storage is blocked).
+const TREND_STYLE_KEY = 'pf_trend_style';
+function readTrendStyle() {
+  try {
+    return localStorage.getItem(TREND_STYLE_KEY) === 'line' ? 'line' : 'bar';
+  } catch (e) {
+    return 'bar';
+  }
+}
+
 const DashboardView = {
   components: { TransactionRowItem, TransactionFormModal, DashboardDateGroups, DashboardAccountGroups, LabelDetail, DonutChart },
   mixins: [DonutFocusMixin],
@@ -146,6 +157,7 @@ const DashboardView = {
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
       expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
       trendPick: null, // index of the month picked on the trend chart, for the readout
+      trendStyle: readTrendStyle(), // 收支與淨值趨勢 draws income/expense as 'bar' or 'line'
       fixedExpensePick: null, // year view: index of the month picked on 固定支出's chart, for the readout
       kpiCompareMode: 'prev', // month view only: 'prev' (較上月) | 'yoy' (較去年同月)
     };
@@ -221,7 +233,7 @@ const DashboardView = {
       return this.viewMode === 'year' ? this.yearTrendMonths : this.monthTrendMonths;
     },
     trendChart() {
-      return Models.buildTrendChart(this.activeTrendMonths);
+      return Models.buildTrendChart(this.activeTrendMonths, Models.localToday().slice(0, 7));
     },
     // Net worth over the same window the income/expense trend above uses
     // (6 months in month mode, the selected year's Jan–Dec in year mode) —
@@ -233,7 +245,7 @@ const DashboardView = {
         : Store.netWorthTrend(this.yearMonth, 6);
     },
     netWorthChart() {
-      return Models.buildNetWorthChart(this.netWorthTrendMonths);
+      return Models.buildNetWorthChart(this.netWorthTrendMonths, Models.localToday().slice(0, 7));
     },
     netWorthChange() {
       const months = this.netWorthTrendMonths;
@@ -669,6 +681,10 @@ const DashboardView = {
     pickFixedExpense(i) {
       this.fixedExpensePick = this.fixedExpensePick === i ? null : i;
     },
+    setTrendStyle(style) {
+      this.trendStyle = style;
+      try { localStorage.setItem(TREND_STYLE_KEY, style); } catch (e) { /* this view only */ }
+    },
     diamondPoints(x, y) {
       return [x + ',' + (y - 3), (x + 2.5) + ',' + y, x + ',' + (y + 3), (x - 2.5) + ',' + y].join(' ');
     },
@@ -951,11 +967,13 @@ const DashboardView = {
         <div class="view-header">
           <h3>收支與淨值趨勢<span class="muted"> · {{ viewMode === 'year' ? (year + ' 年 1–12 月') : '最近 6 個月' }}</span></h3>
           <div class="trend-legend">
-            <span class="legend-item"><span class="legend-dot expense"></span>支出</span>
-            <span class="legend-item"><span class="legend-dot income"></span>收入</span>
-            <span class="legend-item"><span class="legend-dot net"></span>結餘</span>
+            <span class="legend-item"><span class="legend-dot income" :class="{ square: trendStyle === 'bar' }"></span>收入</span>
+            <span class="legend-item"><span class="legend-dot expense square"></span>支出</span>
+            <span class="legend-item"><span class="legend-line net"></span>結餘</span>
+            <span class="legend-item"><span class="legend-dot worth"></span>淨值</span>
           </div>
         </div>
+        <div class="trend-toolbar">
         <div class="trend-readout" :class="{ empty: !trendReadout }">
           <template v-if="trendReadout">
             <strong>{{ trendReadout.label }}</strong>
@@ -966,15 +984,35 @@ const DashboardView = {
           </template>
           <template v-else>點選月份查看數字</template>
         </div>
+        <div class="trend-style-toggle" role="group" aria-label="收入支出的呈現方式">
+          <button :class="{ active: trendStyle === 'bar' }" @click="setTrendStyle('bar')">長條</button>
+          <button :class="{ active: trendStyle === 'line' }" @click="setTrendStyle('line')">折線</button>
+        </div>
+        </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
           <rect v-if="trendPick !== null" :x="trendPick * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-pick" />
           <line x1="0" :y1="trendChart.baselineY" x2="300" :y2="trendChart.baselineY" class="trend-baseline" />
-          <template v-for="b in trendChart.bars" :key="b.yearMonth">
-            <rect :x="b.expenseX" :y="b.expenseY" :width="trendChart.barWidth" :height="b.expenseH" fill="var(--expense)" />
-            <rect :x="b.incomeX" :y="b.incomeY" :width="trendChart.barWidth" :height="b.incomeH" fill="var(--income)" />
+          <!-- Markers are zero-length lines with a round or square cap: with
+               non-scaling strokes they stay round/square however the SVG is
+               stretched, where a circle would turn into an ellipse. -->
+          <template v-if="trendStyle === 'bar'">
+          <template v-for="b in trendChart.bars.filter((x) => !x.future)" :key="'bar-' + b.yearMonth">
+            <rect :x="b.expenseBarX" :y="b.expenseBarY" :width="trendChart.barWidth" :height="b.expenseH" class="trend-bar expense" />
+            <rect :x="b.incomeBarX" :y="b.incomeBarY" :width="trendChart.barWidth" :height="b.incomeH" class="trend-bar income" />
+          </template>
           </template>
           <polyline :points="trendChart.netPoints" class="trend-net-line" />
-          <circle v-for="b in trendChart.bars" :key="'dot-' + b.yearMonth" :cx="b.netX" :cy="b.netY" r="2.5" class="trend-net-dot" />
+          <template v-if="trendStyle === 'line'">
+            <polyline :points="trendChart.expensePoints" class="trend-flow-line expense" />
+            <polyline :points="trendChart.incomePoints" class="trend-flow-line income" />
+          </template>
+          <template v-for="b in trendChart.bars.filter((x) => !x.future)" :key="b.yearMonth">
+            <line :x1="b.x" :y1="b.netY" :x2="b.x" :y2="b.netY" class="trend-marker net" />
+            <template v-if="trendStyle === 'line'">
+              <line :x1="b.x" :y1="b.expenseY" :x2="b.x" :y2="b.expenseY" class="trend-marker expense" />
+              <line :x1="b.x" :y1="b.incomeY" :x2="b.x" :y2="b.incomeY" class="trend-marker income" />
+            </template>
+          </template>
           <rect v-for="(b, i) in trendChart.bars" :key="'hit-' + b.yearMonth" :x="i * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-hit" @click="pickTrend(i)" />
         </svg>
         <!-- Net worth gets its own scale (it's nowhere near 0), stacked under the
@@ -986,7 +1024,7 @@ const DashboardView = {
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
           <rect v-if="trendPick !== null" :x="trendPick * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-pick" />
           <polyline :points="netWorthChart.points" class="trend-worth-line" />
-          <polygon v-for="d in netWorthChart.dots" :key="'nw-' + d.yearMonth" :points="diamondPoints(d.x, d.y)" class="trend-worth-dot" />
+          <polygon v-for="d in netWorthChart.dots.filter((x) => !x.future)" :key="'nw-' + d.yearMonth" :points="diamondPoints(d.x, d.y)" class="trend-worth-dot" />
           <rect v-for="(d, i) in netWorthChart.dots" :key="'nwhit-' + d.yearMonth" :x="i * 300 / netWorthChart.dots.length" y="-4" :width="300 / netWorthChart.dots.length" height="108" class="trend-hit" @click="pickTrend(i)" />
         </svg>
         <div class="trend-labels">
