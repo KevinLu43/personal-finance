@@ -344,16 +344,30 @@ body {
 
 .trend-legend {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
   font-size: 11px;
   color: var(--muted);
-  flex-shrink: 0;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+}
+
+/* A chart panel's header: title (with its muted summary) and legend share a
+   row while they fit, and otherwise the legend drops to its own row below —
+   each phrase (.nowrap) and legend entry staying whole rather than breaking
+   mid-number or leaving one character on a line. On a phone the legend always
+   takes its own row. */
+.chart-header { flex-wrap: wrap; align-items: flex-start; gap: 6px 12px; }
+.chart-header h3 { flex: 1 1 auto; min-width: 0; }
+.nowrap { white-space: nowrap; }
+@media (max-width: 767px) {
+  .chart-header .trend-legend { flex-basis: 100%; justify-content: flex-start; }
 }
 
 .legend-dot {

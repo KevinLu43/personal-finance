@@ -1017,8 +1017,8 @@ const DashboardView = {
 
       <div class="panel-grid">
       <section class="panel span-2">
-        <div class="view-header">
-          <h3>收支與淨值趨勢<span class="muted"> · {{ viewMode === 'year' ? (year + ' 年 1–12 月') : '最近 6 個月' }}</span></h3>
+        <div class="view-header chart-header">
+          <h3>收支與淨值趨勢<span class="muted"> · <span class="nowrap">{{ viewMode === 'year' ? (year + ' 年 1–12 月') : '最近 6 個月' }}</span></span></h3>
           <div class="trend-legend">
             <span class="legend-item"><span class="legend-dot income" :class="{ square: trendStyle === 'bar' }"></span>收入</span>
             <span class="legend-item"><span class="legend-dot expense square"></span>支出</span>
@@ -1086,8 +1086,8 @@ const DashboardView = {
       </section>
 
       <section v-if="viewMode === 'year'" class="panel span-2">
-        <div class="view-header">
-          <h3>固定支出<span class="muted"> · {{ year }} 年共 {{ fmt(recurringExpenseYearTotal + loanPaymentYearTotal) }}(貸款含本金)</span></h3>
+        <div class="view-header chart-header">
+          <h3>固定支出<span class="muted"> · <span class="nowrap">{{ year }} 年共 {{ fmt(recurringExpenseYearTotal + loanPaymentYearTotal) }}</span><span class="nowrap">(貸款含本金)</span></span></h3>
           <div class="trend-legend">
             <span v-for="s in fixedExpenseChart.series" :key="s.key" class="legend-item">
               <span class="legend-dot" :style="{ background: s.color }"></span>{{ s.name }} {{ fmt(s.total) }}
@@ -1231,8 +1231,8 @@ const DashboardView = {
 
       <section style="order: 4;" v-if="viewMode === 'month'" class="panel">
         <h3>固定支出<span class="muted">
-          <template v-if="fixedExpenseExpectedTotal > 0"> · 已入帳 {{ fmt(fixedExpenseBookedTotal) }} · 本月預計共 {{ fmt(fixedExpenseTotal) }}</template>
-          <template v-else> · 共 {{ fmt(fixedExpenseTotal) }}</template>(貸款含本金)</span></h3>
+          <template v-if="fixedExpenseExpectedTotal > 0"> · <span class="nowrap">已入帳 {{ fmt(fixedExpenseBookedTotal) }}</span> · <span class="nowrap">本月預計共 {{ fmt(fixedExpenseTotal) }}</span></template>
+          <template v-else> · <span class="nowrap">共 {{ fmt(fixedExpenseTotal) }}</span></template><span class="nowrap">(貸款含本金)</span></span></h3>
         <div v-if="fixedExpenseAllRows.length === 0" class="empty">這個月還沒有固定支出</div>
         <template v-else>
           <DonutChart :segments="fixedExpenseDonutSegments" :focus="donutFocusIndex('fixedExpenseDonutSegments', fixedExpenseDonutSegments)" @focus="toggleDonutFocus('fixedExpenseDonutSegments', $event)" />
