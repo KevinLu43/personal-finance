@@ -701,11 +701,58 @@ async function addRecurring(fields) {
   return recurring;
 }
 
+// A credit card purchase paid in installments: instead of one expense for the
+// whole amount, a 固定收支 rule that books each period (本金平均攤還, see
+// Models.installmentSchedule) on the card's 結帳日, starting with the first
+// statement on or after the purchase (or on the purchase's own day of the
+// month when the card has no 結帳日) — booked right away when that day is
+// today or earlier. `rate` is a fraction. The plan keeps what was bought
+// (`item`: the note, else the category's name) and when, for each period's note.
+async function addInstallmentPurchase(fields, labelNames, count, rate) {
+  const schedule = Models.installmentSchedule(fields.amount, count, rate);
+  const card = state.accounts.find((a) => a.id === fields.accountId);
+  const statementDay = card && card.statementDay >= 1 ? card.statementDay : null;
+  const firstDueDate = Models.installmentFirstDue(fields.date, statementDay);
+  const category = state.categories.find((c) => c.id === fields.categoryId);
+  return addRecurring({
+    type: 'expense',
+    amount: schedule[0].amount,
+    accountId: fields.accountId,
+    toAccountId: null,
+    categoryId: fields.categoryId,
+    note: fields.note,
+    labelNames: [...labelNames],
+    anchorDay: statementDay || Number(fields.date.slice(8, 10)),
+    occurrenceCount: schedule.length,
+    firstDueDate,
+    installment: {
+      total: fields.amount,
+      count: schedule.length,
+      rate,
+      purchaseDate: fields.date,
+      item: fields.note || (category ? category.name : ''),
+      schedule,
+    },
+  });
+}
+
+// What a credit card can still take: its limit less what is owed now and the
+// installment principal not billed yet. `available` is null without a limit.
+function creditCardStatus(account) {
+  if (!account || account.kind !== 'credit_card') return null;
+  const owed = accountBalance(account);
+  const unbilled = Models.unbilledInstallmentPrincipal(state.recurringTransactions, account.id);
+  const limit = Number(account.creditLimit) || 0;
+  return { limit, owed, unbilled, available: limit > 0 ? limit - owed - unbilled : null };
+}
+
 async function updateRecurring(id, fields) {
   const idx = state.recurringTransactions.findIndex((r) => r.id === id);
   if (idx === -1) return;
   if (isNoChange(state.recurringTransactions[idx], fields)) return;
   const updated = { ...state.recurringTransactions[idx], ...fields, updatedAt: Models.nowIso() };
+  // Same for an installment plan's nested object and schedule array.
+  if (updated.installment) updated.installment = JSON.parse(JSON.stringify(updated.installment));
   // recurringTransactions is the one store with an array field (labelNames)
   // directly on the record — spreading state.recurringTransactions[idx]
   // only shallow-copies it, so a call that doesn't itself override
@@ -743,7 +790,10 @@ async function generateDueForOne(r) {
   const today = Models.localToday();
   const { dates, nextDueDate, remainingOccurrences } = Models.dueOccurrences(r, today);
   if (dates.length === 0) return;
-  for (const date of dates) {
+  // An installment plan books each period's own amount (principal + interest)
+  // and names the period in the note; an ordinary rule books its fixed amount.
+  const firstIndex = Models.installmentIndex(r);
+  for (const [i, date] of dates.entries()) {
     // Already booked (another device got there first): nothing to add.
     const id = `rec:${r.id}:${date}`;
     if (state.transactions.some((t) => t.id === id)) continue;
@@ -752,11 +802,11 @@ async function generateDueForOne(r) {
         id,
         date,
         type: r.type,
-        amount: r.amount,
+        amount: Models.recurringAmountAt(r, i),
         accountId: r.accountId,
         toAccountId: r.toAccountId,
         categoryId: r.categoryId,
-        note: r.note,
+        note: r.installment ? Models.installmentNote(r, firstIndex + i) : r.note,
         recurringId: r.id,
       },
       r.labelNames || []
@@ -947,6 +997,8 @@ window.Store = {
   deleteInvestment,
   dailyInvestmentTotals,
   addRecurring,
+  addInstallmentPurchase,
+  creditCardStatus,
   updateRecurring,
   setRecurringArchived,
   deleteRecurring,

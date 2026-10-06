@@ -192,13 +192,14 @@ const TransactionsView = {
       }
       const category = Store.state.categories.find((c) => c.id === p.categoryId);
       const from = this.accountNameOf(p.accountId);
+      const rule = Store.state.recurringTransactions.find((r) => p.key.startsWith(`rec:${r.id}:`));
       if (p.type === 'transfer') {
         return { icon: '🔁', name: p.note || '轉帳', sub: `${from} → ${this.accountNameOf(p.toAccountId)}`, amount: this.fmt(p.amount), sign: '' };
       }
       return {
         icon: category ? category.icon : '❔',
         name: p.note || (category ? category.name : '固定收支'),
-        sub: `固定${p.type === 'income' ? '收入' : '支出'} · ${p.type === 'income' ? '存入' : '從'}${from}`,
+        sub: rule && rule.installment ? `信用卡分期 · ${from}` : `固定${p.type === 'income' ? '收入' : '支出'} · ${p.type === 'income' ? '存入' : '從'}${from}`,
         amount: (p.type === 'income' ? '+' : '-') + this.fmt(this.projectedBase(p)),
         sign: p.type,
       };

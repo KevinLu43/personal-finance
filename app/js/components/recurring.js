@@ -46,6 +46,20 @@ const RecurringFormModal = {
     existingRule() {
       return this.isNew ? null : Store.state.recurringTransactions.find((r) => r.id === this.editingId);
     },
+    // An installment plan's amounts come from its schedule, so its amount and
+    // period count aren't editable here.
+    installment() {
+      return this.existingRule ? this.existingRule.installment : null;
+    },
+    installmentInfo() {
+      const plan = this.installment;
+      if (!plan) return '';
+      const fmt = (n) => Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+      const left = this.existingRule.remainingOccurrences || 0;
+      const rate = Math.round(plan.rate * 10000) / 100;
+      const swiped = `${Number(plan.purchaseDate.slice(5, 7))}/${Number(plan.purchaseDate.slice(8, 10))}`;
+      return `信用卡分期:${swiped} 刷卡 ${plan.item || ''} 總額 ${fmt(plan.total)} · 共 ${plan.count} 期 · 年利率 ${rate}% · 剩 ${left} 期。各期金額依分期計算(本金平均攤還),不能修改。提前清償時可以封存,之後不再入帳;已入帳的各期不受影響。`;
+    },
   },
   watch: {
     // Leaving 轉帳 while a 證券交割 account is picked would leave a value the
@@ -163,10 +177,13 @@ const RecurringFormModal = {
           <label v-else>執行週期
             <div class="field-hint" style="margin-top: 4px;">每月 {{ existingRule ? existingRule.anchorDay : '' }} 日(建立後不可修改,如需更改請刪除重建)</div>
           </label>
+          <div v-if="installment" class="field-group"><span class="field-hint">{{ installmentInfo }}</span></div>
+          <template v-else>
           <label>執行期數(選填) <input type="number" min="1" v-model="form.occurrenceCount" placeholder="不限期數" />
             <span class="field-hint">設定這筆要總共執行幾次,執行完會自動封存;留空代表不限期數,持續執行下去</span>
           </label>
           <label>金額 <CalculatorField v-model="form.amount" /></label>
+          </template>
           <label>{{ form.type === 'transfer' ? '轉出帳戶' : '帳戶' }}
             <select v-model="form.accountId">
               <optgroup v-for="g in accountGroups" :key="g.label" :label="g.label">
@@ -221,7 +238,7 @@ const RECURRING_TYPE_ICON = { expense: '➖', income: '➕', transfer: '🔁' };
 const RecurringTransactionsPanel = {
   components: { RecurringFormModal },
   data() {
-    return { editingId: null }; // null closed, 'new' or a rule id
+    return { editingId: null, endedOpen: false }; // editingId: null closed, 'new' or a rule id; endedOpen: the 已結束 fold
   },
   computed: {
     // Loans still being paid off in installments, listed beside the rules so
@@ -238,10 +255,22 @@ const RecurringTransactionsPanel = {
         })
         .filter((row) => row.left > 0);
     },
-    rules() {
+    // Three groups: ordinary rules (archived ones stay, marked, to be revived),
+    // installment plans still billing, and plans that are paid off or stopped —
+    // folded away, since an installment never restarts.
+    sortedRules() {
       return Store.state.recurringTransactions
         .slice()
         .sort((a, b) => (a.nextDueDate < b.nextDueDate ? -1 : 1));
+    },
+    rules() {
+      return this.sortedRules.filter((r) => !r.installment);
+    },
+    activePlans() {
+      return this.sortedRules.filter((r) => r.installment && !r.isArchived);
+    },
+    endedPlans() {
+      return this.sortedRules.filter((r) => r.installment && r.isArchived);
     },
   },
   methods: {
@@ -265,7 +294,25 @@ const RecurringTransactionsPanel = {
     fmt(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
     },
+    // An installment plan's next period, not its first period's amount.
+    nextAmount(r) {
+      return Models.recurringAmountAt(r, 0) || r.amount;
+    },
+    // What was bought and when, with the purchase's total.
+    planTitle(r) {
+      const p = r.installment;
+      const item = p.item || r.note || (this.category(r) ? this.category(r).name : '');
+      return `${item} · ${Number(p.purchaseDate.slice(5, 7))}/${Number(p.purchaseDate.slice(8, 10))} 刷卡 ${this.fmt(p.total)}`;
+    },
     subLabel(r) {
+      if (r.installment) {
+        const p = r.installment;
+        const done = Models.installmentIndex(r);
+        const card = this.accountName(r.accountId);
+        if (done >= p.count) return `${card} · ${p.count} 期已全部入帳`;
+        if (r.isArchived) return `${card} · 已停止(入帳 ${done}/${p.count} 期)`;
+        return `${card} · 第 ${done + 1}/${p.count} 期 ${r.nextDueDate} 入帳 · 每月 ${r.anchorDay} 日`;
+      }
       const parts = [`每月 ${r.anchorDay} 日`, `下次 ${r.nextDueDate}`];
       if (r.remainingOccurrences != null) parts.push(`剩 ${r.remainingOccurrences} 期`);
       return parts.join(' · ');
@@ -290,7 +337,7 @@ const RecurringTransactionsPanel = {
         <button class="primary" @click="openNew">+ 新增</button>
       </div>
 
-      <div v-if="rules.length === 0 && loanInstallments.length === 0" class="empty">還沒有固定收支,適合用來記薪資、房租、訂閱、保費這類每月固定發生的收入或支出</div>
+      <div v-if="rules.length === 0 && activePlans.length === 0 && endedPlans.length === 0 && loanInstallments.length === 0" class="empty">還沒有固定收支,適合用來記薪資、房租、訂閱、保費這類每月固定發生的收入或支出</div>
 
       <div v-for="r in rules" :key="r.id" class="list-row clickable" :class="{ archived: r.isArchived }" @click="openEdit(r)">
         <span class="icon-badge" :style="{ background: (category(r)?.color || '#adb5bd') + '30' }">{{ icon(r) }}</span>
@@ -299,12 +346,40 @@ const RecurringTransactionsPanel = {
           <div class="list-row-sub">{{ subLabel(r) }}</div>
         </div>
         <div class="list-row-amount" :class="{ negative: r.type === 'expense', positive: r.type === 'income' }">
-          {{ r.type === 'expense' ? '-' : r.type === 'income' ? '+' : '' }}{{ fmt(r.amount) }}
+          {{ r.type === 'expense' ? '-' : r.type === 'income' ? '+' : '' }}{{ fmt(nextAmount(r)) }}
         </div>
         <div class="list-row-actions">
           <button @click.stop="toggleArchive(r)">{{ r.isArchived ? '取消封存' : '封存' }}</button>
         </div>
       </div>
+
+      <template v-if="activePlans.length || endedPlans.length">
+        <div class="subsection-header" style="margin-top: 8px;">
+          <span>信用卡分期</span><span class="muted">在「記帳」新增刷卡紀錄時設定</span>
+        </div>
+        <div v-for="r in activePlans" :key="r.id" class="list-row clickable" @click="openEdit(r)">
+          <span class="icon-badge" :style="{ background: (category(r)?.color || '#adb5bd') + '30' }">{{ icon(r) }}</span>
+          <div class="list-row-main">
+            <div class="list-row-title">{{ planTitle(r) }}</div>
+            <div class="list-row-sub">{{ subLabel(r) }}</div>
+          </div>
+          <div class="list-row-amount negative">-{{ fmt(nextAmount(r)) }}</div>
+        </div>
+        <div v-if="endedPlans.length" class="list-row clickable ended-plans-header" @click="endedOpen = !endedOpen">
+          <div class="list-row-main"><div class="list-row-sub">已結束的分期 {{ endedPlans.length }} 筆</div></div>
+          <span class="expand-arrow" :class="{ open: endedOpen }">›</span>
+        </div>
+        <template v-if="endedOpen">
+          <div v-for="r in endedPlans" :key="r.id" class="list-row clickable archived" @click="openEdit(r)">
+            <span class="icon-badge" :style="{ background: (category(r)?.color || '#adb5bd') + '30' }">{{ icon(r) }}</span>
+            <div class="list-row-main">
+              <div class="list-row-title">{{ planTitle(r) }}</div>
+              <div class="list-row-sub">{{ subLabel(r) }}</div>
+            </div>
+            <div class="list-row-amount">{{ fmt(r.installment.total) }}</div>
+          </div>
+        </template>
+      </template>
 
       <div v-if="loanInstallments.length" class="subsection-header" style="margin-top: 8px;">
         <span>貸款分期</span><span class="muted">在「帳戶」頁設定</span>

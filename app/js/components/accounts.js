@@ -5,6 +5,18 @@ const AccountRowItem = {
     isCredit() {
       return this.account.kind === 'credit_card';
     },
+    // A card with a limit shows what's left of it, with a bar of what the
+    // debt and the unbilled installments take — on its own line, so the
+    // figures never get squeezed by the row's buttons.
+    cardStatus() {
+      return this.isCredit ? Store.creditCardStatus(this.account) : null;
+    },
+    cardUsagePct() {
+      const s = this.cardStatus;
+      if (!s || !(s.limit > 0)) return { owed: 0, unbilled: 0 };
+      const owed = Math.min(100, Math.max(0, (s.owed / s.limit) * 100));
+      return { owed, unbilled: Math.min(100 - owed, Math.max(0, (s.unbilled / s.limit) * 100)) };
+    },
     isLoan() {
       return this.account.kind === 'loan';
     },
@@ -82,6 +94,11 @@ const AccountRowItem = {
       return Models.accountIcon(this.account);
     },
   },
+  methods: {
+    fmtCard(n) {
+      return Models.formatMoney(n, this.account.currency);
+    },
+  },
   template: `
     <div class="list-row" :class="[{ archived: account.isArchived, dragging }, dragMark]" :data-drag-list="listId" :data-drag-id="account.id">
       <span class="drag-handle"
@@ -102,9 +119,19 @@ const AccountRowItem = {
         <div class="list-row-sub">
           {{ account.currency }}
           <span v-if="account.isDefault"> · 預設帳戶</span>
-          <span v-if="isCredit"> · 額度 {{ creditLimitDisplay }}</span>
-          <span v-if="isCredit && account.paymentDay"> · 每月 {{ account.paymentDay }} 日繳款</span>
+          <span v-if="isCredit && account.statementDay"> · 每月 {{ account.statementDay }} 日結帳</span>
+          <span v-if="isCredit && account.paymentDay"> · {{ account.statementDay ? '' : '每月 ' }}{{ account.paymentDay }} 日繳款</span>
           <span v-if="isBrokerage"> · {{ account.market === 'TW' ? '台股' : '美股' }} · 手續費 {{ feeRateDisplay }}%</span>
+        </div>
+        <div v-if="cardStatus && cardStatus.available !== null" class="credit-usage">
+          <div class="credit-usage-text">
+            <span>可用 <strong :class="{ negative: cardStatus.available < 0 }">{{ fmtCard(cardStatus.available) }}</strong> / 額度 {{ fmtCard(cardStatus.limit) }}</span>
+            <span v-if="cardStatus.unbilled > 0">分期未入帳 {{ fmtCard(cardStatus.unbilled) }}</span>
+          </div>
+          <div class="credit-usage-track">
+            <span class="credit-usage-owed" :style="{ width: cardUsagePct.owed + '%' }"></span>
+            <span class="credit-usage-unbilled" :style="{ width: cardUsagePct.unbilled + '%' }"></span>
+          </div>
         </div>
         <div v-if="isPledge" class="list-row-sub">
           {{ loanTypeLabel }} · 質押 {{ activePledges.length }} 檔 · 應付利息合計 {{ pledgeAccruedTotal }}
@@ -286,7 +313,7 @@ const AccountsView = {
       const payable = Store.activeAccounts().filter((a) => !Models.isTransferOnlyKind(a.kind));
       const payFrom = payable.find((a) => a.isDefault) || payable[0];
       return {
-        name: '', kind: 'cash', icon: Models.accountIcon({ kind: 'cash' }), color: '#adb5bd', currency: 'TWD', initialBalance: 0, creditLimit: 0, paymentDay: '',
+        name: '', kind: 'cash', icon: Models.accountIcon({ kind: 'cash' }), color: '#adb5bd', currency: 'TWD', initialBalance: 0, creditLimit: 0, paymentDay: '', statementDay: '',
         market: 'TW', feeRate: 0, stockTaxRate: 0, etfTaxRate: 0,
         loanType: 'pledge', loanRate: 0, loanInstallments: 12, loanPaidInstallments: 0,
         loanNextDue: Models.addMonthClamped(today, Number(today.slice(8, 10))), loanPayFromAccountId: payFrom ? payFrom.id : '',
@@ -320,6 +347,7 @@ const AccountsView = {
         initialBalance: account.initialBalance,
         creditLimit: account.creditLimit || 0,
         paymentDay: account.paymentDay || '',
+        statementDay: account.statementDay || '',
         market: account.market || 'TW',
         feeRate: Math.round((account.feeRate || 0) * 1000000) / 10000,
         stockTaxRate: Math.round((account.stockTaxRate || 0) * 1000000) / 10000,
@@ -347,6 +375,7 @@ const AccountsView = {
         initialBalance: Number(this.form.initialBalance) || 0,
         creditLimit: this.form.kind === 'credit_card' ? Number(this.form.creditLimit) || 0 : null,
         paymentDay: this.form.kind === 'credit_card' && Number(this.form.paymentDay) > 0 ? Math.min(31, Math.round(Number(this.form.paymentDay))) : null,
+        statementDay: this.form.kind === 'credit_card' && Number(this.form.statementDay) > 0 ? Math.min(31, Math.round(Number(this.form.statementDay))) : null,
         market: this.form.kind === 'brokerage' ? this.form.market : null,
         feeRate: this.form.kind === 'brokerage' ? (Number(this.form.feeRate) || 0) / 100 : null,
         stockTaxRate: this.form.kind === 'brokerage' ? (Number(this.form.stockTaxRate) || 0) / 100 : null,
@@ -637,6 +666,10 @@ const AccountsView = {
             </label>
             <label v-if="form.kind === 'credit_card'">信用額度
               <input type="number" v-model="form.creditLimit" />
+            </label>
+            <label v-if="form.kind === 'credit_card'">每月結帳日(選填)
+              <input type="number" min="1" max="31" v-model="form.statementDay" placeholder="例如 5" />
+              <span class="field-hint">刷卡分期會在每月結帳日記一期,第一期是刷卡後的第一個結帳日,跟帳單一致</span>
             </label>
             <label v-if="form.kind === 'credit_card'">每月繳款日(選填)
               <input type="number" min="1" max="31" v-model="form.paymentDay" placeholder="例如 20" />

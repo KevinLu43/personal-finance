@@ -274,6 +274,9 @@ function newAccount(fields) {
     // A credit card's monthly 繳款日 (day of month, 1-31), optional — only
     // used to mark the calendar, nothing is booked from it.
     paymentDay: fields.kind === 'credit_card' ? (Number(fields.paymentDay) || null) : null,
+    // Its monthly 結帳日 (statement closing day), optional — an installment
+    // purchase books each period on it, the way the bill shows it.
+    statementDay: fields.kind === 'credit_card' ? (Number(fields.statementDay) || null) : null,
     // A brokerage (證券交割) account settles trades in exactly one market —
     // real settlement accounts work this way (a TW securities account and a
     // 複委託 US account are never the same account number) — and carries its
@@ -1260,6 +1263,9 @@ function newRecurring(fields) {
   const [y, m] = today.slice(0, 7).split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
   const firstDay = Math.min(anchorDay, daysInMonth);
+  // An installment purchase starts on its own purchase date instead (the
+  // first period is billed that day, even when it is backdated).
+  const nextDueDate = fields.firstDueDate || `${y}-${String(m).padStart(2, '0')}-${String(firstDay).padStart(2, '0')}`;
   return {
     id: uuid(),
     type: fields.type, // expense | income | transfer
@@ -1272,10 +1278,13 @@ function newRecurring(fields) {
     // straight from a form's data()) fails IndexedDB's structured clone.
     labelNames: [...(fields.labelNames || [])],
     anchorDay,
-    nextDueDate: `${y}-${String(m).padStart(2, '0')}-${String(firstDay).padStart(2, '0')}`,
+    nextDueDate,
     // How many more times this rule should fire — null means unlimited.
     // Decremented by dueOccurrences each time it generates one.
     remainingOccurrences: fields.occurrenceCount ? Number(fields.occurrenceCount) : null,
+    // A credit card 分期 plan ({ total, count, rate, purchaseDate, schedule }),
+    // or null for an ordinary rule. Copied plain for IndexedDB's clone.
+    installment: fields.installment ? JSON.parse(JSON.stringify(fields.installment)) : null,
     isArchived: false,
     updatedAt: nowIso(),
   };
@@ -1326,6 +1335,76 @@ function dueOccurrences(recurring, todayStr) {
   return { dates, nextDueDate: cursor, remainingOccurrences: remaining };
 }
 
+// 信用卡分期 (本金平均攤還): the principal is split evenly in whole currency
+// units, whatever doesn't divide added to the first period, and each period's
+// interest is the principal still outstanding × annual rate ÷ 12, rounded —
+// so the payments start highest and step down. `rate` is a fraction, like the
+// app's other rates. Returns one { principal, interest, amount } per period.
+function installmentSchedule(total, count, rate = 0) {
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  const base = Math.floor(total / n);
+  const first = Math.round((total - base * (n - 1)) * 100) / 100;
+  const schedule = [];
+  let outstanding = total;
+  for (let i = 0; i < n; i++) {
+    const principal = i === 0 ? first : base;
+    const interest = Math.round((outstanding * (Number(rate) || 0)) / 12);
+    schedule.push({ principal, interest, amount: principal + interest });
+    outstanding -= principal;
+  }
+  return schedule;
+}
+
+// The day an installment purchase's first period is billed: the card's next
+// 結帳日 on or after the purchase (a purchase on the closing day itself is on
+// that statement), or the purchase date when the card has no 結帳日 set.
+function installmentFirstDue(purchaseDate, statementDay) {
+  if (!(statementDay >= 1)) return purchaseDate;
+  const [y, m] = purchaseDate.slice(0, 7).split('-').map(Number);
+  const thisMonth = `${y}-${String(m).padStart(2, '0')}-${String(Math.min(statementDay, new Date(y, m, 0).getDate())).padStart(2, '0')}`;
+  return thisMonth >= purchaseDate ? thisMonth : addMonthClamped(thisMonth, statementDay);
+}
+
+// Where an installment rule's next run sits in its schedule (0-based): the
+// periods already booked are the count less what remains.
+function installmentIndex(recurring) {
+  if (!recurring.installment) return 0;
+  const remaining = recurring.remainingOccurrences == null ? recurring.installment.count : recurring.remainingOccurrences;
+  return recurring.installment.count - remaining;
+}
+
+// The amount a rule books `ahead` runs after its next one — its fixed amount,
+// or for an installment plan that period's principal + interest.
+function recurringAmountAt(recurring, ahead = 0) {
+  if (!recurring.installment) return recurring.amount;
+  const period = recurring.installment.schedule[installmentIndex(recurring) + ahead];
+  return period ? period.amount : 0;
+}
+
+// What one installment period's transaction says: what was bought, which
+// period it is, the day the card was swiped, and the interest folded in —
+// e.g. "iPhone 分期 2/3 · 10/10 刷卡(含利息 120)". `item` is the purchase's
+// note, or its category's name when the note was left empty.
+function installmentNote(recurring, index) {
+  const { count, schedule, purchaseDate } = recurring.installment;
+  const item = recurring.installment.item || recurring.note || '';
+  const period = schedule[index] || { interest: 0 };
+  const swiped = purchaseDate ? ` · ${Number(purchaseDate.slice(5, 7))}/${Number(purchaseDate.slice(8, 10))} 刷卡` : '';
+  return `${item ? item + ' ' : ''}分期 ${index + 1}/${count}${swiped}` + (period.interest > 0 ? `(含利息 ${period.interest.toLocaleString('zh-TW')})` : '');
+}
+
+// Installment principal on one card not billed yet — an installment purchase
+// holds its whole amount against the card's limit, released a period at a
+// time as each is billed. An archived (stopped) plan holds nothing.
+function unbilledInstallmentPrincipal(recurrings, accountId) {
+  let sum = 0;
+  for (const r of recurrings) {
+    if (!r.installment || r.isArchived || r.accountId !== accountId) continue;
+    for (const period of r.installment.schedule.slice(installmentIndex(r))) sum += period.principal;
+  }
+  return sum;
+}
+
 // What the 記帳 calendar shows as still to come, after `fromDate` (normally
 // today) up to and including `toDate`: every future run of a 固定支出 rule
 // (its amount is known), and the due dates accounts carry — a credit card's
@@ -1343,8 +1422,9 @@ function projectedItems({ recurrings, accounts, pledges }, fromDate, toDate) {
     for (let guard = 0; cursor <= toDate && (remaining == null || remaining > 0) && guard < 60; guard++) {
       if (cursor > fromDate) {
         items.push({
-          key: `rec:${r.id}:${cursor}`, date: cursor, kind: 'recurring', type: r.type, amount: r.amount,
-          accountId: r.accountId, toAccountId: r.toAccountId, categoryId: r.categoryId, note: r.note,
+          key: `rec:${r.id}:${cursor}`, date: cursor, kind: 'recurring', type: r.type, amount: recurringAmountAt(r, guard),
+          accountId: r.accountId, toAccountId: r.toAccountId, categoryId: r.categoryId,
+          note: r.installment ? installmentNote(r, installmentIndex(r) + guard) : r.note,
         });
       }
       if (remaining != null) remaining -= 1;
@@ -1423,7 +1503,7 @@ function monthlyFixedExpense(transactions, year) {
 // `category` ({ name, color }) so buildDonutSegments can chart them as-is.
 // Everything comes off the ledger's own tags, so a deleted rule or account
 // still shows under the name its transactions recorded.
-function fixedExpenseBreakdown(transactions, prefix, categories, accounts) {
+function fixedExpenseBreakdown(transactions, prefix, categories, accounts, recurrings = []) {
   const byKey = new Map();
   for (const t of transactions) {
     if (t.isDeleted || !t.date.startsWith(prefix)) continue;
@@ -1438,11 +1518,20 @@ function fixedExpenseBreakdown(transactions, prefix, categories, accounts) {
         row = { key, kind: 'loan', name: loan ? loan.name : '貸款', color: (loan && loan.color) || '#e09f3e', principal: 0, interest: 0, amount: 0 };
       } else {
         const category = categories.find((c) => c.id === t.categoryId);
-        row = { key, kind: 'rule', name: t.note || (category ? category.name : '(未分類)'), color: (category && category.color) || '#adb5bd', amount: 0 };
+        const rule = recurrings.find((r) => r.id === t.recurringId);
+        const plan = rule && rule.installment;
+        // An installment period reads as the purchase, with which period and
+        // when it was bought as detail — not the period's whole long note.
+        const name = plan ? `${plan.item || rule.note || (category ? category.name : '')} 分期` : t.note || (category ? category.name : '(未分類)');
+        row = { key, kind: 'rule', name, color: (category && category.color) || '#adb5bd', amount: 0, plan, periods: [] };
       }
       byKey.set(key, row);
     }
     row.amount += t.amount;
+    if (row.plan) {
+      const m = /分期 (\d+)\//.exec(t.note || '');
+      if (m) row.periods.push(Number(m[1]));
+    }
     if (row.kind === 'loan') {
       if (t.type === 'transfer') row.principal += t.amount;
       else row.interest += t.amount;
@@ -1452,7 +1541,11 @@ function fixedExpenseBreakdown(transactions, prefix, categories, accounts) {
     .map((r) => ({
       ...r,
       category: { name: r.name, color: r.color },
-      detail: r.kind === 'loan' ? `本金 ${Math.round(r.principal).toLocaleString('zh-TW')} + 利息 ${Math.round(r.interest).toLocaleString('zh-TW')}` : '',
+      detail: r.kind === 'loan'
+        ? `本金 ${Math.round(r.principal).toLocaleString('zh-TW')} + 利息 ${Math.round(r.interest).toLocaleString('zh-TW')}`
+        : r.plan
+          ? `${r.periods.length ? '第 ' + r.periods.sort((a, b) => a - b).join('、') + `/${r.plan.count} 期 · ` : ''}${Number(r.plan.purchaseDate.slice(5, 7))}/${Number(r.plan.purchaseDate.slice(8, 10))} 刷卡`
+          : '',
     }))
     .sort((a, b) => b.amount - a.amount);
 }
@@ -1587,6 +1680,12 @@ window.Models = {
   localToday,
   validateBackup,
   SEED_CATEGORIES,
+  installmentSchedule,
+  installmentFirstDue,
+  installmentIndex,
+  recurringAmountAt,
+  installmentNote,
+  unbilledInstallmentPrincipal,
   projectedItems,
   holidayOf,
   CHART_PALETTE,

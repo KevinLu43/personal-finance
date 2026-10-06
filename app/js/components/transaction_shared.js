@@ -173,11 +173,48 @@ const TransactionFormModal = {
     return {
       form: this.buildForm(),
       newLabelInput: '',
+      installmentCount: 1, // 分期數 — 1 is no installments, booked as one expense
+      installmentRatePct: 0, // 年利率 (%), for an installment purchase
+      scheduleOpen: false, // the per-period list under the installment summary
     };
   },
   computed: {
     isNew() {
       return this.editingId === 'new';
+    },
+    selectedAccount() {
+      return Store.state.accounts.find((a) => a.id === this.form.accountId) || null;
+    },
+    isCreditCard() {
+      return !!this.selectedAccount && this.selectedAccount.kind === 'credit_card';
+    },
+    // Installments are offered only when recording a new card expense; an
+    // existing record (or one period of a plan) is edited as a single entry.
+    canInstall() {
+      return this.isNew && this.form.type === 'expense' && this.isCreditCard;
+    },
+    installmentPeriods() {
+      return this.canInstall ? Math.max(1, Math.floor(Number(this.installmentCount) || 1)) : 1;
+    },
+    installmentPlan() {
+      const amount = Number(this.form.amount);
+      if (this.installmentPeriods < 2 || !(amount > 0)) return null;
+      const schedule = Models.installmentSchedule(amount, this.installmentPeriods, (Number(this.installmentRatePct) || 0) / 100);
+      const interest = schedule.reduce((s, p) => s + p.interest, 0);
+      const statementDay = this.selectedAccount && this.selectedAccount.statementDay;
+      const firstDue = Models.installmentFirstDue(this.form.date, statementDay);
+      return { schedule, interest, total: amount + interest, statementDay, firstDue };
+    },
+    // The picked card's limit, debt and unbilled installments — the hint
+    // under the account field, and whether this entry would go over.
+    cardStatus() {
+      return this.isCreditCard ? Store.creditCardStatus(this.selectedAccount) : null;
+    },
+    overLimit() {
+      const s = this.cardStatus;
+      if (!s || s.available === null) return 0;
+      const amount = this.isNew ? Number(this.form.amount) || 0 : 0;
+      return Math.max(0, amount - s.available);
     },
     // A dividend is edited in its own form (per-share x shares, deductions),
     // wherever its income row was clicked — the generic form would let the
@@ -335,11 +372,23 @@ const TransactionFormModal = {
         note: this.form.note.trim(),
       };
     },
+    fmt(n) {
+      return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+    },
+    // A new card expense with 分期數 > 1 becomes an installment plan (a
+    // 固定收支 rule booking each period); anything else is one transaction.
+    async addFields(fields) {
+      if (fields.type === 'expense' && this.installmentPeriods > 1) {
+        await Store.addInstallmentPurchase(fields, this.form.labelNames, this.installmentPeriods, (Number(this.installmentRatePct) || 0) / 100);
+      } else {
+        await Store.addTransaction(fields, this.form.labelNames);
+      }
+    },
     async save() {
       const fields = this.buildFields();
       if (!fields) return;
       if (this.isNew) {
-        await Store.addTransaction(fields, this.form.labelNames);
+        await this.addFields(fields);
       } else {
         await Store.updateTransaction(this.editingId, fields, this.form.labelNames);
       }
@@ -352,7 +401,7 @@ const TransactionFormModal = {
     async saveAndAddAnother() {
       const fields = this.buildFields();
       if (!fields) return;
-      await Store.addTransaction(fields, this.form.labelNames);
+      await this.addFields(fields);
       this.form = {
         ...this.form,
         amount: '',
@@ -360,6 +409,9 @@ const TransactionFormModal = {
         note: '',
         labelNames: [],
       };
+      this.installmentCount = 1;
+      this.installmentRatePct = 0;
+      this.scheduleOpen = false;
     },
     async removeCurrent() {
       if (this.isNew) return;
@@ -389,7 +441,38 @@ const TransactionFormModal = {
                 <option v-for="a in g.accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
               </optgroup>
             </select>
+            <span v-if="cardStatus && cardStatus.available !== null" class="field-hint" :class="{ negative: overLimit > 0 }">
+              可用額度 {{ fmt(cardStatus.available) }} / {{ fmt(cardStatus.limit) }}<template v-if="cardStatus.unbilled > 0">(含分期未入帳 {{ fmt(cardStatus.unbilled) }})</template><template v-if="overLimit > 0"> · 這筆超過可用額度 {{ fmt(overLimit) }}</template>
+            </span>
           </label>
+          <div v-if="canInstall" class="installment-fields">
+            <label>分期數
+              <input type="number" min="1" max="60" step="1" v-model.number="installmentCount" />
+            </label>
+            <label>年利率(%)
+              <input type="number" min="0" step="0.01" v-model.number="installmentRatePct" :disabled="installmentPeriods < 2" />
+            </label>
+          </div>
+          <div v-if="installmentPlan" class="installment-summary">
+            <div>
+              首期 <strong>{{ fmt(installmentPlan.schedule[0].amount) }}</strong>
+              <template v-if="installmentPlan.schedule.length > 1"> · 第 2 期 {{ fmt(installmentPlan.schedule[1].amount) }}<template v-if="installmentPlan.interest > 0"> 起逐期遞減</template></template>
+              · 共 {{ installmentPeriods }} 期
+            </div>
+            <div class="muted">總利息 {{ fmt(installmentPlan.interest) }} · 總繳款 {{ fmt(installmentPlan.total) }}</div>
+            <div class="muted">
+              <template v-if="installmentPlan.statementDay">依結帳日每月 {{ installmentPlan.statementDay }} 日記一期,第一期 {{ installmentPlan.firstDue.slice(5).replace('-', '/') }}</template>
+              <template v-else>每月 {{ Number(form.date.slice(8, 10)) }} 日記一期(這張卡沒設結帳日,到「帳戶」頁設定後會對齊帳單)</template>
+              · 會出現在「固定收支」</div>
+            <button type="button" class="link-button" @click="scheduleOpen = !scheduleOpen">{{ scheduleOpen ? '收起各期明細' : '查看各期明細' }}</button>
+            <div v-if="scheduleOpen" class="installment-table">
+              <div v-for="(p, i) in installmentPlan.schedule" :key="i" class="installment-table-row">
+                <span>第 {{ i + 1 }} 期</span>
+                <span class="muted">本金 {{ fmt(p.principal) }}<template v-if="p.interest > 0"> + 利息 {{ fmt(p.interest) }}</template></span>
+                <span>{{ fmt(p.amount) }}</span>
+              </div>
+            </div>
+          </div>
           <label v-if="form.type === 'transfer'">轉入帳戶
             <select v-model="form.toAccountId">
               <optgroup v-for="g in accountGroups" :key="g.label" :label="g.label">

@@ -336,7 +336,7 @@ const DashboardView = {
     // repaying principal isn't spending).
     fixedExpenseRows() {
       if (this.viewMode !== 'month') return [];
-      return Models.fixedExpenseBreakdown(Store.baseTransactionList(), this.periodPrefix, Store.state.categories, Store.state.accounts);
+      return Models.fixedExpenseBreakdown(Store.baseTransactionList(), this.periodPrefix, Store.state.categories, Store.state.accounts, Store.state.recurringTransactions);
     },
     fixedExpenseTotal() {
       return this.fixedExpenseRows.reduce((sum, row) => sum + row.amount, 0);
@@ -588,6 +588,7 @@ const DashboardView = {
         .map((r) => ({
           category: { name: r.account.name, color: r.account.color || '#adb5bd' },
           amount: -r.displayBalance,
+          card: Store.creditCardStatus(r.account),
         }))
         .sort((a, b) => b.amount - a.amount);
     },
@@ -1301,6 +1302,11 @@ const DashboardView = {
             <span class="bar-name">{{ row.category.name }}</span>
             <span v-if="row.otherRows" class="expand-arrow" :class="{ open: creditDebtOtherOpen }">›</span>
             <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardDebtPercent(row.amount) }}</span>
+          </div>
+          <div v-if="row.card && (row.card.available !== null || row.card.unbilled > 0)" class="bar-row-sub">
+            <template v-if="row.card.available !== null">可用 {{ fmt(row.card.available) }} / {{ fmt(row.card.limit) }}</template>
+            <template v-if="row.card.available !== null && row.card.unbilled > 0"> · </template>
+            <template v-if="row.card.unbilled > 0">分期未入帳 {{ fmt(row.card.unbilled) }}</template>
           </div>
           <div v-if="row.otherRows && creditDebtOtherOpen" class="category-detail">
             <div v-for="d in row.otherRows" :key="d.category.name" class="category-detail-row">
