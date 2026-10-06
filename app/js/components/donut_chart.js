@@ -19,7 +19,7 @@ const DonutChart = {
         :stroke-dasharray="seg.dash + ' ' + seg.gap"
         :stroke-dashoffset="seg.dashOffset"
         transform="rotate(-90 50 50)"
-        class="donut-segment" :class="{ dimmed: focus !== null && focus !== i }"
+        class="donut-segment" :class="{ dimmed: focus !== null && focus !== i, expected: seg.expected }"
         @click="$emit('focus', i)"
       />
     </svg>

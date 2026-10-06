@@ -338,14 +338,52 @@ const DashboardView = {
       if (this.viewMode !== 'month') return [];
       return Models.fixedExpenseBreakdown(Store.baseTransactionList(), this.periodPrefix, Store.state.categories, Store.state.accounts, Store.state.recurringTransactions);
     },
-    fixedExpenseTotal() {
+    // This month only: the 固定支出 still to run before the month ends — rules
+    // not yet booked and loan installments (principal + interest, estimated the
+    // way the 固定收支 panel does) — as 預計 rows beside what is booked, so the
+    // month's whole fixed spend shows from its first day. Nothing else on the
+    // page counts them; they are never written anywhere.
+    fixedExpenseExpectedRows() {
+      const today = Models.localToday();
+      if (this.viewMode !== 'month' || this.yearMonth !== today.slice(0, 7)) return [];
+      const { recurringTransactions, accounts, categories } = Store.state;
+      const md = (date) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+      return Models.projectedItems({ recurrings: recurringTransactions, accounts, pledges: [] }, today, `${this.yearMonth}-31`)
+        .filter((p) => p.date.startsWith(this.yearMonth) && ((p.kind === 'recurring' && p.type === 'expense') || p.kind === 'loan'))
+        .map((p) => {
+          if (p.kind === 'loan') {
+            const loan = accounts.find((a) => a.id === p.accountId);
+            const left = loan.loanInstallments - loan.loanPaidInstallments;
+            const payment = Math.round(Models.installmentBreakdown(Store.accountBalance(loan), loan.loanRate, left).payment);
+            const color = loan.color || '#e09f3e';
+            return { key: 'expected:' + p.key, kind: 'loan', expected: true, category: { name: loan.name, color }, detail: `${md(p.date)} 預計`, amount: Store.baseAmountOf({ amount: payment, accountId: loan.id, date: p.date }) };
+          }
+          const rule = recurringTransactions.find((r) => p.key.startsWith(`rec:${r.id}:`));
+          const category = categories.find((c) => c.id === p.categoryId);
+          const plan = rule && rule.installment;
+          const name = plan ? `${plan.item || rule.note || (category ? category.name : '')} 分期` : (rule && rule.note) || (category ? category.name : '(未分類)');
+          const detail = plan ? `第 ${Models.installmentIndex(rule) + 1}/${plan.count} 期 · ${md(p.date)} 預計` : `${md(p.date)} 預計`;
+          return { key: 'expected:' + p.key, kind: 'rule', expected: true, category: { name, color: (category && category.color) || '#adb5bd' }, detail, amount: Store.baseAmountOf({ amount: p.amount, accountId: p.accountId, date: p.date }) };
+        });
+    },
+    // Booked and 預計 rows together, biggest first — what the donut and list show.
+    fixedExpenseAllRows() {
+      return [...this.fixedExpenseRows, ...this.fixedExpenseExpectedRows].sort((a, b) => b.amount - a.amount);
+    },
+    fixedExpenseBookedTotal() {
       return this.fixedExpenseRows.reduce((sum, row) => sum + row.amount, 0);
+    },
+    fixedExpenseExpectedTotal() {
+      return this.fixedExpenseExpectedRows.reduce((sum, row) => sum + row.amount, 0);
+    },
+    fixedExpenseTotal() {
+      return this.fixedExpenseBookedTotal + this.fixedExpenseExpectedTotal;
     },
     // Capped the same way as every other donut on this page — a household
     // with several subscriptions and a couple of loan installments can
     // easily pass 6 lines otherwise.
     fixedExpenseCappedRows() {
-      return this.capBreakdown(this.fixedExpenseRows, 'category');
+      return this.capBreakdown(this.fixedExpenseAllRows, 'category');
     },
     fixedExpenseDonutSegments() {
       return Models.buildDonutSegments(this.fixedExpenseCappedRows);
@@ -1176,16 +1214,18 @@ const DashboardView = {
       </section>
 
       <section style="order: 4;" v-if="viewMode === 'month'" class="panel">
-        <h3>固定支出<span class="muted"> · 共 {{ fmt(fixedExpenseTotal) }}(貸款含本金)</span></h3>
-        <div v-if="fixedExpenseRows.length === 0" class="empty">這個月還沒有固定支出</div>
+        <h3>固定支出<span class="muted">
+          <template v-if="fixedExpenseExpectedTotal > 0"> · 已入帳 {{ fmt(fixedExpenseBookedTotal) }} · 本月預計共 {{ fmt(fixedExpenseTotal) }}</template>
+          <template v-else> · 共 {{ fmt(fixedExpenseTotal) }}</template>(貸款含本金)</span></h3>
+        <div v-if="fixedExpenseAllRows.length === 0" class="empty">這個月還沒有固定支出</div>
         <template v-else>
           <DonutChart :segments="fixedExpenseDonutSegments" :focus="donutFocusIndex('fixedExpenseDonutSegments', fixedExpenseDonutSegments)" @focus="toggleDonutFocus('fixedExpenseDonutSegments', $event)" />
           <div v-for="(row, i) in fixedExpenseCappedRows" :key="row.key" :class="donutLegendClass('fixedExpenseDonutSegments', fixedExpenseDonutSegments, i)">
             <div class="bar-row clickable" @click="row.otherRows && toggleFixedExpenseOther(); toggleDonutFocus('fixedExpenseDonutSegments', i)">
-              <span class="legend-swatch" :style="{ background: row.category.color }"></span>
+              <span class="legend-swatch" :class="{ expected: row.expected }" :style="{ background: row.category.color }"></span>
               <span class="bar-name">{{ row.category.name }}<span v-if="row.detail" class="row-detail">{{ row.detail }}</span></span>
               <span v-if="row.otherRows" class="expand-arrow" :class="{ open: fixedExpenseOtherOpen }">›</span>
-              <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
+              <span class="bar-amount" :class="{ 'expected-amount': row.expected }">{{ fmt(row.amount) }} · {{ fmtFixedPercent(row.amount) }}</span>
             </div>
             <div v-if="row.otherRows && fixedExpenseOtherOpen" class="category-detail">
               <div v-for="d in row.otherRows" :key="d.key" class="category-detail-row">

@@ -904,7 +904,9 @@ function buildDonutSegments(categoryBreakdown) {
   return categoryBreakdown.map((row) => {
     const share = (row.amount / total) * circumference;
     const dash = share > 0 ? Math.max(share - gap, 0.3) : 0;
-    const seg = { color: row.category.color, dash, gap: circumference - dash, dashOffset: -offset };
+    // `expected` marks a slice for money not booked yet (固定支出's 預計 rows),
+    // drawn paler by DonutChart.
+    const seg = { color: row.category.color, dash, gap: circumference - dash, dashOffset: -offset, expected: !!row.expected };
     offset += share;
     return seg;
   });

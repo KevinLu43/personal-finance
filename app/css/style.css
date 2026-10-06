@@ -269,6 +269,11 @@ body {
    and so do their legend rows — see donut_chart.js. */
 .donut-segment { cursor: pointer; transition: opacity 0.15s; }
 .donut-segment.dimmed { opacity: 0.2; }
+/* 固定支出's 預計 (not booked yet): a paler slice, swatch and amount. */
+.donut-segment.expected { opacity: 0.35; }
+.donut-segment.expected.dimmed { opacity: 0.12; }
+.legend-swatch.expected { opacity: 0.35; }
+.bar-amount.expected-amount { color: var(--muted); }
 .donut-dimmed { opacity: 0.45; transition: opacity 0.15s; }
 .donut-focused .bar-name,
 .donut-focused .month-table-cell.month { font-weight: 700; }
