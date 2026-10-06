@@ -251,9 +251,42 @@ const DashboardView = {
     netWorthChart() {
       return Models.buildNetWorthChart(this.netWorthTrendMonths, Models.localToday().slice(0, 7));
     },
-    netWorthChange() {
+    // What the 淨值 layer's header reads: a net worth, the month-end it is
+    // from, and how it moved against a named starting point. By default the
+    // latest month shown (never one still to come) against the end of the
+    // month before the window — so 今年以來 in year view really starts at last
+    // year's close, January included. A picked month reads against the month
+    // before it instead.
+    netWorthSummary() {
       const months = this.netWorthTrendMonths;
-      return months.length < 2 ? 0 : months[months.length - 1].netWorth - months[0].netWorth;
+      if (!months.length) return null;
+      const thisMonth = Models.localToday().slice(0, 7);
+      const shown = months.filter((m) => m.yearMonth <= thisMonth);
+      if (!shown.length) return null;
+      const before = (ym) => {
+        const [y, m] = ym.split('-').map(Number);
+        return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+      };
+      const worthAt = (ym) => {
+        const inWindow = months.find((m) => m.yearMonth === ym);
+        return inWindow ? inWindow.netWorth : Store.netWorthTrend(ym, 1)[0].netWorth;
+      };
+      const pct = (change, base) => (base > 0 ? (change / base) * 100 : null);
+      const picked = this.trendPick === null ? null : months[this.trendPick];
+      if (picked && picked.yearMonth <= thisMonth) {
+        const base = worthAt(before(picked.yearMonth));
+        const change = picked.netWorth - base;
+        return { value: picked.netWorth, asOf: `${picked.month} 月底`, compare: '較上月', change, pct: pct(change, base) };
+      }
+      const last = shown[shown.length - 1];
+      const baseYm = before(months[0].yearMonth);
+      const base = worthAt(baseYm);
+      const change = last.netWorth - base;
+      const asOf = last.yearMonth === thisMonth ? '目前' : `${last.month} 月底`;
+      let compare;
+      if (this.viewMode === 'year') compare = String(this.year) === thisMonth.slice(0, 4) ? '今年以來' : '全年';
+      else compare = `較 ${Number(baseYm.slice(5, 7))} 月底`;
+      return { value: last.netWorth, asOf, compare, change, pct: pct(change, base) };
     },
     // The period the summary cards compare against: last month (or, toggled
     // in month view, the same month last year) — year view always compares
@@ -728,8 +761,14 @@ const DashboardView = {
       const up = cur > prev;
       return { text: label + ' ' + (up ? '▲' : '▼') + Math.abs(pct) + '%', good: up === goodWhenUp };
     },
+    // A month still to come has nothing to read out, so it can't be picked.
     pickTrend(i) {
+      const bar = this.trendChart.bars[i];
+      if (bar && bar.future) return;
       this.trendPick = this.trendPick === i ? null : i;
+    },
+    fmtSignedPct(p) {
+      return (p > 0 ? '+' : '') + p.toFixed(1) + '%';
     },
     pickFixedExpense(i) {
       this.fixedExpensePick = this.fixedExpensePick === i ? null : i;
@@ -1071,8 +1110,14 @@ const DashboardView = {
         <!-- Net worth gets its own scale (it's nowhere near 0), stacked under the
              bars so both read against the one month axis at the bottom. -->
         <div class="view-header trend-sub-header">
-          <span class="trend-sub-title"><span class="legend-dot worth"></span>淨值</span>
-          <span class="net-worth-change" :class="netWorthChange >= 0 ? 'positive' : 'negative'">{{ netWorthChange >= 0 ? '+' : '' }}{{ fmt(netWorthChange) }}</span>
+          <span class="trend-sub-title">
+            <span class="legend-dot worth"></span>淨值
+            <template v-if="netWorthSummary"><strong class="net-worth-value">{{ fmt(netWorthSummary.value) }}</strong><span class="nowrap">{{ netWorthSummary.asOf }}</span></template>
+          </span>
+          <span v-if="netWorthSummary" class="net-worth-change-wrap">
+            <span class="nowrap">{{ netWorthSummary.compare }}</span>
+            <span class="net-worth-change nowrap" :class="netWorthSummary.change >= 0 ? 'positive' : 'negative'">{{ netWorthSummary.change >= 0 ? '+' : '' }}{{ fmt(netWorthSummary.change) }}<template v-if="netWorthSummary.pct !== null">({{ fmtSignedPct(netWorthSummary.pct) }})</template></span>
+          </span>
         </div>
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" class="trend-svg">
           <rect v-if="trendPick !== null" :x="trendPick * 300 / trendChart.bars.length" y="-4" :width="300 / trendChart.bars.length" height="108" class="trend-pick" />
@@ -1081,7 +1126,7 @@ const DashboardView = {
           <rect v-for="(d, i) in netWorthChart.dots" :key="'nwhit-' + d.yearMonth" :x="i * 300 / netWorthChart.dots.length" y="-4" :width="300 / netWorthChart.dots.length" height="108" class="trend-hit" @click="pickTrend(i)" />
         </svg>
         <div class="trend-labels">
-          <span v-for="(b, i) in trendChart.bars" :key="'lbl-' + b.yearMonth" :class="{ picked: trendPick === i }" @click="pickTrend(i)">{{ b.month }}月</span>
+          <span v-for="(b, i) in trendChart.bars" :key="'lbl-' + b.yearMonth" :class="{ picked: trendPick === i, future: b.future }" @click="pickTrend(i)">{{ b.month }}月</span>
         </div>
       </section>
 

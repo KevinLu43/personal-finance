@@ -1178,7 +1178,11 @@ button.primary {
 }
 
 .trend-sub-header { margin-top: 14px; }
-.trend-sub-title { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted, #868e96); }
+.trend-sub-title { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; font-size: 13px; color: var(--text-muted, #868e96); }
+.trend-sub-title .legend-dot { align-self: center; }
+.net-worth-value { font-size: 15px; color: var(--ink); }
+.net-worth-change-wrap { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 2px 6px; font-size: 12px; color: var(--muted); }
+.trend-labels span.future { color: var(--line); cursor: default; }
 /* Net worth's own line and marker (a diamond, vs the net line's circle) so the
    two lines never read as the same series. */
 .legend-dot.worth { background: #7950f2; border-radius: 1px; transform: rotate(45deg); width: 7px; height: 7px; }
