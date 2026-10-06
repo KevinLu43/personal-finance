@@ -1281,13 +1281,19 @@ button.primary {
 /* A credit card's limit on the 帳戶 page: what's left, then a bar of what the
    debt (solid) and unbilled installments (lighter) take of it. */
 .credit-usage { margin-top: 4px; font-size: 12px; color: var(--muted); }
-.credit-usage-text { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; }
+.credit-usage-text { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.credit-usage-text span { white-space: nowrap; }
 .credit-usage-text strong { color: var(--ink); }
 .credit-usage-text strong.negative { color: var(--expense); }
 .credit-usage-track { display: flex; height: 4px; margin-top: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .credit-usage-owed { background: var(--expense); }
 .credit-usage-unbilled { background: var(--warning); }
 .bar-row-sub { font-size: 11px; color: var(--muted); margin: -2px 0 4px 18px; }
+/* Rows a 固定收支 rule booked carry a small tag; the form says the same. */
+.source-tag { display: inline-block; font-size: 10px; line-height: 1.5; padding: 0 6px; margin-right: 4px; border-radius: 999px; background: var(--line); color: var(--muted); vertical-align: 1px; }
+.source-tag.installment { background: #fdf0dc; color: #8a5a10; }
+.source-note { margin: 0 0 12px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 12px; color: var(--muted); }
+.liability-note { font-size: 11px; color: var(--muted); text-align: right; margin: -4px 0 6px; }
 .ended-plans-header { padding-top: 6px; padding-bottom: 6px; }
 
 /* Cash dividends listed under a holding in 投資總覽. */

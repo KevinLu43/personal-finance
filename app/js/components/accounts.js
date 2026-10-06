@@ -119,14 +119,16 @@ const AccountRowItem = {
         <div class="list-row-sub">
           {{ account.currency }}
           <span v-if="account.isDefault"> · 預設帳戶</span>
-          <span v-if="isCredit && account.statementDay"> · 每月 {{ account.statementDay }} 日結帳</span>
-          <span v-if="isCredit && account.paymentDay"> · {{ account.statementDay ? '' : '每月 ' }}{{ account.paymentDay }} 日繳款</span>
+          <span v-if="isCredit && account.statementDay"> · {{ account.statementDay }} 日結帳</span>
+          <span v-if="isCredit && account.paymentDay"> · {{ account.paymentDay }} 日繳款</span>
           <span v-if="isBrokerage"> · {{ account.market === 'TW' ? '台股' : '美股' }} · 手續費 {{ feeRateDisplay }}%</span>
         </div>
         <div v-if="cardStatus && cardStatus.available !== null" class="credit-usage">
           <div class="credit-usage-text">
-            <span>可用 <strong :class="{ negative: cardStatus.available < 0 }">{{ fmtCard(cardStatus.available) }}</strong> / 額度 {{ fmtCard(cardStatus.limit) }}</span>
+            <span>可用 <strong :class="{ negative: cardStatus.available < 0 }">{{ fmtCard(cardStatus.available) }}</strong></span>
+            <span>額度 {{ fmtCard(cardStatus.limit) }}</span>
             <span v-if="cardStatus.unbilled > 0">分期未入帳 {{ fmtCard(cardStatus.unbilled) }}</span>
+            <span v-if="cardStatus.unbilled > 0">含分期總欠款 {{ fmtCard(-(cardStatus.owed + cardStatus.unbilled)) }}</span>
           </div>
           <div class="credit-usage-track">
             <span class="credit-usage-owed" :style="{ width: cardUsagePct.owed + '%' }"></span>

@@ -1395,6 +1395,17 @@ function installmentNote(recurring, index) {
   return `${item ? item + ' ' : ''}分期 ${index + 1}/${count}${swiped}` + (period.interest > 0 ? `(含利息 ${period.interest.toLocaleString('zh-TW')})` : '');
 }
 
+// Where a transaction came from, when a 固定收支 rule booked it: '分期' for
+// a credit card installment period, '固定收支' for any other rule, '' for one
+// entered by hand. A rule deleted since still reads from the note's
+// "分期 n/m" so its periods keep their tag.
+function transactionSource(transaction, recurrings) {
+  if (!transaction || !transaction.recurringId) return '';
+  const rule = recurrings.find((r) => r.id === transaction.recurringId);
+  if ((rule && rule.installment) || /分期 \d+\/\d+/.test(transaction.note || '')) return '分期';
+  return '固定收支';
+}
+
 // Installment principal on one card not billed yet — an installment purchase
 // holds its whole amount against the card's limit, released a period at a
 // time as each is billed. An archived (stopped) plan holds nothing.
@@ -1683,6 +1694,7 @@ window.Models = {
   validateBackup,
   SEED_CATEGORIES,
   installmentSchedule,
+  transactionSource,
   installmentFirstDue,
   installmentIndex,
   recurringAmountAt,

@@ -74,6 +74,10 @@ const DashboardAccountGroups = {
             <span v-if="row.foreign" class="muted">{{ currencySymbol(row.account.currency) }}{{ fmtCur(row.nativeBalance, row.account.currency) }} ≈ </span>{{ fmt(row.displayBalance) }}<template v-if="percentBase > 0"> · {{ fmtPercent(row.displayBalance) }}</template>
           </span>
         </div>
+        <div v-if="row.unbilled > 0" class="account-split">
+          <span>含分期總欠款 {{ fmt(row.displayBalance - row.unbilled) }}</span>
+          <span>分期未入帳 {{ fmt(row.unbilled) }}</span>
+        </div>
         <div v-if="row.account.kind === 'brokerage'" class="account-split">
           <span>現金 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.cash, row.account.currency) : fmt(row.cash) }}</span>
           <span>持股成本 {{ row.foreign ? currencySymbol(row.account.currency) + fmtCur(row.holdingsCost, row.account.currency) : fmt(row.holdingsCost) }}</span>
@@ -542,8 +546,12 @@ const DashboardView = {
         // Every total is in TWD; a foreign account keeps its own-currency
         // figure alongside for the row to show.
         const displayBalance = nativeBalance * rate;
+        // A card's installment principal not billed yet, in TWD (see creditCardStatus).
+        const card = a.kind === 'credit_card' ? Store.creditCardStatus(a) : null;
+        const unbilled = card ? card.unbilled * rate : 0;
         return {
           account: a,
+          unbilled,
           nativeBalance,
           foreign: rate !== 1 || (a.currency && a.currency !== 'TWD'),
           balance,
@@ -562,6 +570,12 @@ const DashboardView = {
     // netWorth is exactly the debt those rows carry.
     liabilityTotal() {
       return this.assetTotal - this.netWorth;
+    },
+    // Installment principal on the cards not billed yet, in TWD — owed to the
+    // bank but not in any balance (each period is booked as it's billed), so
+    // shown beside 負債 and as a more conservative 淨值, never folded in.
+    installmentUnbilledTotal() {
+      return this.accountsWithBalance.reduce((sum, r) => sum + (r.unbilled || 0), 0);
     },
     // Which foreign currencies actually have an active account right now —
     // only those rates are shown, so a currency nobody holds doesn't clutter
@@ -1121,6 +1135,7 @@ const DashboardView = {
       <section class="panel span-2">
         <h3>資產總覽<span class="muted"> · 淨值 {{ fmt(netWorth) }}</span></h3>
         <div v-if="liabilityTotal !== 0" class="muted asset-formula">資產 {{ fmt(assetTotal) }} − 負債 {{ fmt(liabilityTotal) }} = 淨值 {{ fmt(netWorth) }}</div>
+        <div v-if="installmentUnbilledTotal > 0" class="muted asset-formula">扣除分期未入帳 {{ fmt(installmentUnbilledTotal) }} 後的淨值 {{ fmt(netWorth - installmentUnbilledTotal) }}(僅供參考)</div>
         <div v-if="heldCurrencies.length" class="muted asset-formula">匯率 · {{ rateSummaryText }}(TWD,可在「帳戶」頁調整)</div>
         <div v-if="accountsWithBalance.length === 0" class="empty">還沒有帳戶,先到「帳戶」分頁新增一個</div>
         <div v-else class="asset-liability-split">
@@ -1131,6 +1146,7 @@ const DashboardView = {
           </div>
           <div class="asset-liability-col">
             <div class="asset-liability-col-header"><span>負債</span><span :class="{ negative: liabilityTotal > 0 }">{{ fmt(liabilityTotal) }}</span></div>
+            <div v-if="installmentUnbilledTotal > 0" class="liability-note">另有分期未入帳 {{ fmt(installmentUnbilledTotal) }}</div>
             <div v-if="liabilityAccountGroups.length === 0" class="empty">目前沒有負債</div>
             <DashboardAccountGroups :groups="liabilityAccountGroups" />
           </div>

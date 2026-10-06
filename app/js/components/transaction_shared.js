@@ -21,6 +21,11 @@ const TransactionRowItem = {
     labelNames() {
       return Store.labelsForTransaction(this.transaction.id).map((l) => l.name);
     },
+    // A tag on rows a 固定收支 rule booked, so they don't read as a duplicate
+    // of the rule listed in that panel.
+    sourceTag() {
+      return Models.transactionSource(this.transaction, Store.state.recurringTransactions);
+    },
     // A row shows its amount in the currency of the account it is booked on —
     // only a foreign one gets a symbol, so plain TWD rows read as before.
     currency() {
@@ -50,6 +55,7 @@ const TransactionRowItem = {
       <div class="list-row-main">
         <span class="list-row-title">{{ transaction.type === 'transfer' ? accountName + ' → ' + toAccountName : (transaction.note || category?.name || '(未分類)') }}</span>
         <div class="list-row-sub">
+          <span v-if="sourceTag" class="source-tag" :class="{ installment: sourceTag === '分期' }">{{ sourceTag }}</span>
           {{ accountName }}
           <span v-if="labelNames.length"> · {{ labelNames.join(', ') }}</span>
         </div>
@@ -181,6 +187,16 @@ const TransactionFormModal = {
   computed: {
     isNew() {
       return this.editingId === 'new';
+    },
+    // Editing an entry a 固定收支 rule booked: say so, and that the change
+    // stays on this one entry.
+    sourceNote() {
+      if (this.isNew) return '';
+      const t = Store.state.transactions.find((x) => x.id === this.editingId);
+      const source = Models.transactionSource(t, Store.state.recurringTransactions);
+      if (source === '分期') return '這筆是信用卡分期自動入帳的一期,修改或刪除只影響這一期;之後各期在下方「固定收支」的信用卡分期管理。';
+      if (source === '固定收支') return '這筆由「固定收支」自動產生,修改或刪除只影響這一筆;之後每月的金額在下方「固定收支」調整。';
+      return '';
     },
     selectedAccount() {
       return Store.state.accounts.find((a) => a.id === this.form.accountId) || null;
@@ -426,6 +442,7 @@ const TransactionFormModal = {
       <div class="modal">
         <h3>{{ isNew ? '新增紀錄' : '編輯紀錄' }}</h3>
         <div class="modal-body">
+          <p v-if="sourceNote" class="source-note">{{ sourceNote }}</p>
           <label>類型
             <select v-model="form.type">
               <option value="expense">支出</option>
