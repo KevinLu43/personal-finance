@@ -21,6 +21,15 @@ const TransactionRowItem = {
     labelNames() {
       return Store.labelsForTransaction(this.transaction.id).map((l) => l.name);
     },
+    // Labels double as the operator's reusable notes (早餐, 加油, STEAM...), so
+    // they lead the row; without any, the category does. The free-text note
+    // is the one-off detail and sits in the small line under it.
+    title() {
+      const t = this.transaction;
+      if (t.type === 'transfer') return this.accountName + ' → ' + this.toAccountName;
+      if (this.labelNames.length) return this.labelNames.join('、');
+      return this.category?.name || '(未分類)';
+    },
     // A tag on rows a 固定收支 rule booked, so they don't read as a duplicate
     // of the rule listed in that panel.
     sourceTag() {
@@ -53,11 +62,11 @@ const TransactionRowItem = {
       <span v-if="transaction.type === 'transfer'" class="icon-badge" style="background: #adb5bd30;">🔁</span>
       <span v-else class="icon-badge" :style="{ background: (category?.color || '#adb5bd') + '30' }">{{ category?.icon || '❔' }}</span>
       <div class="list-row-main">
-        <span class="list-row-title">{{ transaction.type === 'transfer' ? accountName + ' → ' + toAccountName : (transaction.note || category?.name || '(未分類)') }}</span>
+        <span class="list-row-title">{{ title }}</span>
         <div class="list-row-sub">
           <span v-if="sourceTag" class="source-tag" :class="{ installment: sourceTag === '分期' }">{{ sourceTag }}</span>
           {{ accountName }}
-          <span v-if="labelNames.length"> · {{ labelNames.join(', ') }}</span>
+          <span v-if="transaction.note"> · {{ transaction.note }}</span>
         </div>
       </div>
       <div class="list-row-amount" :class="{ negative: transaction.type === 'expense', positive: transaction.type === 'income' }">
