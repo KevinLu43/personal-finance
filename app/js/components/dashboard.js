@@ -153,6 +153,7 @@ const DashboardView = {
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
       expandedOtherLabelId: null, // ...and, when that row is 其他, which label inside it is expanded
       labelScope: 'period', // 標籤統計 reads the selected month/year ('period') or every date ('all') — for a trip spanning months
+      labelKind: 'expense', // 標籤統計 reads expenses or (toggled) transfers — kept apart, a transfer isn't spending
       incomeOtherOpen: false, // 收入分類's folded 其他 row
       fixedExpenseOtherOpen: false, // 固定支出（月）'s folded 其他 row
       creditDebtOtherOpen: false, // 信用卡欠款's folded 其他 row
@@ -467,12 +468,16 @@ const DashboardView = {
         (t) => !t.isDeleted && t.type === 'expense' && t.date.startsWith(this.periodPrefix)
       );
     },
-    // What 標籤統計 works from: the selected period, or all expenses ever.
+    // What 標籤統計 works from: expenses or transfers (labelKind), in the
+    // selected period or across every date. Transfers are counted on their
+    // own — moving money between accounts (a card bill paid, money into the
+    // brokerage) isn't spending, and folding it in would count the card's
+    // purchases twice.
     labelScopeTransactions() {
-      if (this.labelScope === 'all') {
-        return Store.baseTransactionList().filter((t) => !t.isDeleted && t.type === 'expense');
-      }
-      return this.periodExpenseTransactions;
+      const kind = this.labelKind;
+      return Store.baseTransactionList().filter(
+        (t) => !t.isDeleted && t.type === kind && (this.labelScope === 'all' || t.date.startsWith(this.periodPrefix))
+      );
     },
     // Each transaction's own-currency amount, so a label's spend can be shown
     // in yen/dollars as well as the TWD it converts to.
@@ -858,6 +863,12 @@ const DashboardView = {
       const inCategory = this.periodExpenseTransactions.filter((t) => t.categoryId === categoryId);
       return Models.labelBreakdown(inCategory, Store.state.transactionLabels, Store.state.labels);
     },
+    // A different kind is a different list; don't keep a label expanded across it.
+    setLabelKind(kind) {
+      this.labelKind = kind;
+      this.expandedLabelId = null;
+      this.expandedOtherLabelId = null;
+    },
     toggleLabelExpand(labelId) {
       this.expandedLabelId = this.expandedLabelId === labelId ? null : labelId;
       this.expandedOtherLabelId = null;
@@ -897,7 +908,28 @@ const DashboardView = {
       const span = Models.daysBetween(first, last) + 1;
       const total = txs.reduce((s, t) => s + t.amount, 0);
       const range = first === last ? first : `${first} ~ ${last}`;
+      // A transfer label (a card bill, money into the brokerage) recurs rather
+      // than runs as a trip, so it reads per transfer instead of per day.
+      if (this.labelKind === 'transfer') return `${range} · ${txs.length} 筆 · 平均每筆 ${this.fmt(total / txs.length)}`;
       return `${range} · 共 ${span} 天 · 平均每天 ${this.fmt(total / span)} · ${txs.length} 筆`;
+    },
+    // A transfer label's money by route, from → to, biggest first.
+    labelRouteBreakdown(labelId) {
+      const byRoute = new Map();
+      for (const t of this.labelTransactions(labelId)) {
+        const key = `${t.accountId}>${t.toAccountId}`;
+        byRoute.set(key, (byRoute.get(key) || 0) + t.amount);
+      }
+      const nameOf = (id) => {
+        const a = Store.state.accounts.find((x) => x.id === id);
+        return a ? a.name : '(已刪除帳戶)';
+      };
+      return [...byRoute.entries()]
+        .map(([key, amount]) => {
+          const [from, to] = key.split('>');
+          return { key, name: `${nameOf(from)} → ${nameOf(to)}`, amount };
+        })
+        .sort((a, b) => b.amount - a.amount);
     },
     // Where a label's spend went, by expense category — the reverse of
     // categoryLabelBreakdown, so a label (which cuts across categories) can
@@ -967,7 +999,14 @@ const DashboardView = {
     // shares of: the label's own spend in the scope.
     labelDetail(labelId, total) {
       const share = (amount) => (total > 0 ? amount / total * 100 : 0);
-      const sections = [{
+      // A transfer has no category and its route already names both
+      // accounts, so a transfer label leads with 依路線 in place of 依分類 and 依帳戶.
+      const transfer = this.labelKind === 'transfer';
+      const sections = transfer ? [{
+        title: '依路線',
+        open: true,
+        rows: this.labelRouteBreakdown(labelId).map((d) => ({ key: d.key, name: d.name, pct: share(d.amount), text: this.fmt(d.amount), wide: true })),
+      }] : [{
         title: '依分類',
         open: true,
         rows: this.labelCategoryBreakdown(labelId).map((d) => ({
@@ -978,7 +1017,7 @@ const DashboardView = {
           text: this.fmt(d.amount),
         })),
       }];
-      const accounts = this.labelAccountBreakdown(labelId);
+      const accounts = transfer ? [] : this.labelAccountBreakdown(labelId);
       if (accounts.length) {
         sections.push({
           title: '依帳戶',
@@ -1340,10 +1379,13 @@ const DashboardView = {
       <section style="order: 3;" class="panel">
         <h3>{{ labelScope === 'all' ? '標籤統計 · 全部期間' : (viewMode === 'year' ? '全年標籤統計' : '標籤統計') }}</h3>
         <div class="chip-row" style="margin: 0 0 8px;">
+          <span class="chip" :class="{ selected: labelKind === 'expense' }" @click="setLabelKind('expense')">支出</span>
+          <span class="chip" :class="{ selected: labelKind === 'transfer' }" @click="setLabelKind('transfer')">轉帳</span>
+          <span class="chip-divider" aria-hidden="true"></span>
           <span class="chip" :class="{ selected: labelScope === 'period' }" @click="labelScope = 'period'">{{ viewMode === 'year' ? '本年' : '本月' }}</span>
           <span class="chip" :class="{ selected: labelScope === 'all' }" @click="labelScope = 'all'">全部期間</span>
         </div>
-        <div v-if="labelBreakdown.length === 0" class="empty">{{ labelScope === 'all' ? '還沒有標籤紀錄' : (viewMode === 'year' ? '這一年還沒有標籤紀錄' : '這個月還沒有標籤紀錄') }}</div>
+        <div v-if="labelBreakdown.length === 0" class="empty">{{ labelScope === 'all' ? '還沒有' : (viewMode === 'year' ? '這一年還沒有' : '這個月還沒有') }}{{ labelKind === 'transfer' ? '加了標籤的轉帳' : '標籤紀錄' }}</div>
         <div v-for="row in labelBreakdownRows" :key="row.label.id">
           <div class="bar-row clickable" @click="toggleLabelExpand(row.label.id)">
             <span class="icon-badge-sm" :style="{ background: (row.label.color || '#6d6875') + '30' }">{{ row.label.icon || '🏷️' }}</span>

@@ -600,6 +600,8 @@ body {
   background: var(--bg);
 }
 
+.chip-divider { width: 1px; align-self: stretch; margin: 2px 2px; background: var(--line); }
+
 .chip.selected {
   background: var(--accent);
   border-color: var(--accent);
