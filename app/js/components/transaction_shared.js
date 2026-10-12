@@ -249,6 +249,20 @@ const TransactionFormModal = {
     cardStatus() {
       return this.isCreditCard ? Store.creditCardStatus(this.selectedAccount) : null;
     },
+    // Under the account field(s): what the account holds (or owes) now and,
+    // for a new entry, what it will after this one — so a transfer or an
+    // expense can be checked against the balance before it's saved. A card on
+    // an expense already shows its 可用額度 above, so it's left out there.
+    fromBalanceHint() {
+      if (this.form.type === 'expense' && this.isCreditCard) return null;
+      const sign = this.form.type === 'income' ? 1 : -1;
+      return this.balanceHint(this.form.accountId, sign * (Number(this.form.amount) || 0));
+    },
+    toBalanceHint() {
+      if (this.form.type !== 'transfer') return null;
+      const received = this.crossCurrency ? Number(this.form.toAmount) || this.suggestedToAmount : Number(this.form.amount) || 0;
+      return this.balanceHint(this.form.toAccountId, received);
+    },
     overLimit() {
       const s = this.cardStatus;
       if (!s || s.available === null) return 0;
@@ -414,6 +428,24 @@ const TransactionFormModal = {
     fmt(n) {
       return Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
     },
+    // One account's hint. `delta` is how this entry moves its money: positive
+    // in, negative out. A card or loan stores what is owed, so money in lowers
+    // the debt and money out raises it.
+    balanceHint(accountId, delta) {
+      const account = Store.state.accounts.find((a) => a.id === accountId);
+      if (!account) return null;
+      const debt = Models.isLiabilityKind(account.kind);
+      const now = Store.accountBalance(account);
+      const money = (n) => (account.currency && account.currency !== 'TWD' ? Models.currencySymbol(account.currency) : '') + Models.formatMoney(n, account.currency);
+      const label = debt ? '目前欠款' : account.kind === 'brokerage' ? '現金餘額' : '目前餘額';
+      // An entry being edited is already in the balance, so only a new one
+      // gets the "after" figure.
+      if (!this.isNew || !delta) return { text: `${label} ${money(now)}`, short: false };
+      const after = debt ? now - delta : now + delta;
+      const verb = this.form.type === 'transfer' ? '轉帳後' : '記帳後';
+      const short = !debt && after < 0;
+      return { text: `${label} ${money(now)} → ${verb} ${money(after)}${short ? ' · 餘額不足' : ''}`, short };
+    },
     // A new card expense with 分期數 > 1 becomes an installment plan (a
     // 固定收支 rule booking each period); anything else is one transaction.
     async addFields(fields) {
@@ -481,6 +513,7 @@ const TransactionFormModal = {
                 <option v-for="a in g.accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
               </optgroup>
             </select>
+            <span v-if="fromBalanceHint" class="field-hint" :class="{ negative: fromBalanceHint.short }">{{ fromBalanceHint.text }}</span>
             <span v-if="cardStatus && cardStatus.available !== null" class="field-hint" :class="{ negative: overLimit > 0 }">
               可用額度 {{ fmt(cardStatus.available) }} / {{ fmt(cardStatus.limit) }}<template v-if="cardStatus.unbilled > 0">(含分期未入帳 {{ fmt(cardStatus.unbilled) }})</template><template v-if="overLimit > 0"> · 這筆超過可用額度 {{ fmt(overLimit) }}</template>
             </span>
@@ -519,6 +552,7 @@ const TransactionFormModal = {
                 <option v-for="a in g.accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
               </optgroup>
             </select>
+            <span v-if="toBalanceHint" class="field-hint" :class="{ negative: toBalanceHint.short }">{{ toBalanceHint.text }}</span>
           </label>
           <label v-if="crossCurrency">轉入金額({{ toCurrency }})
             <input type="number" step="any" min="0" v-model="form.toAmount" :placeholder="String(suggestedToAmount || '')" />
