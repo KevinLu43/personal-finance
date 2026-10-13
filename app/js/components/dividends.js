@@ -49,7 +49,7 @@ const DividendRowItem = {
         <span class="list-row-title">{{ detail.ticker }}</span>
         <span v-if="companyName" class="ticker-name">{{ companyName }}</span>
         <div class="list-row-sub">
-          <template v-if="showDate">{{ dividend.date }} · </template>配息 · 每股 {{ detail.perShare }} × {{ detail.shares }} 股 · {{ accountName }}
+          <template v-if="showDate">{{ dividend.date }} · </template>配息<template v-if="detail.perShare && detail.shares"> · 每股 {{ detail.perShare }} × {{ detail.shares }} 股</template> · {{ accountName }}
         </div>
       </div>
       <div class="list-row-amount positive">
@@ -78,6 +78,13 @@ const DividendFormModal = {
       sharesTouched: !isNew,
       perShareTouched: !isNew,
       grossTouched: !isNew,
+      // 'cash' (現金股利, an income) or 'stock' (股票股利/配股, saved as a
+      // 配股 investment record: shares at no cost). Only a new entry picks;
+      // a saved 配股 is edited from its trade row.
+      kind: 'cash',
+      stockPerShare: '',
+      stockShares: '',
+      stockSharesTouched: false,
     };
   },
   created() {
@@ -136,6 +143,12 @@ const DividendFormModal = {
     net() {
       return (Number(this.form.gross) || 0) - (Number(this.form.deduction) || 0);
     },
+    // Taiwan's par value is 10 元: 配股 N 元 is N/10 of a share per share held.
+    suggestedStockShares() {
+      const perShare = Number(this.stockPerShare) || 0;
+      if (this.market !== 'TW' || !(perShare > 0)) return '';
+      return Math.floor((this.heldOnDate * perShare) / 10 + 1e-9) || '';
+    },
   },
   watch: {
     'form.holdingAccountId'() {
@@ -160,6 +173,9 @@ const DividendFormModal = {
     },
     'form.shares'() {
       this.recalcGross();
+    },
+    suggestedStockShares(n) {
+      if (!this.stockSharesTouched) this.stockShares = n;
     },
   },
   methods: {
@@ -215,13 +231,16 @@ const DividendFormModal = {
     cancel() {
       this.$emit('close', {});
     },
+    // Only the amount is required: 每股股利 and 持有股數 help work it out but
+    // may be left empty when all that's known is what landed in the account
+    // (stored as null then, and the row simply doesn't show them).
     buildFields() {
-      const perShare = Number(this.form.perShare);
-      const shares = Number(this.form.shares);
+      const perShare = Number(this.form.perShare) > 0 ? Number(this.form.perShare) : null;
+      const shares = Number(this.form.shares) > 0 ? Number(this.form.shares) : null;
       const gross = Number(this.form.gross);
       const deduction = Number(this.form.deduction) || 0;
       if (!this.form.holdingAccountId || !this.form.ticker || !this.form.receiveAccountId) return null;
-      if (!(perShare > 0) || !(shares > 0) || !(gross > 0) || deduction < 0 || gross - deduction <= 0) return null;
+      if (!(gross > 0) || deduction < 0 || gross - deduction <= 0) return null;
       return {
         date: this.form.date,
         holdingAccountId: this.form.holdingAccountId,
@@ -234,7 +253,32 @@ const DividendFormModal = {
         deduction,
       };
     },
+    // 股票股利: a 配股 investment record — the shares, at no cost.
+    stockFields() {
+      const quantity = Number(this.stockShares);
+      if (!this.form.holdingAccountId || !this.form.ticker || !(quantity > 0)) return null;
+      return {
+        date: this.form.date,
+        accountId: this.form.holdingAccountId,
+        market: this.market,
+        action: 'stockDividend',
+        ticker: this.form.ticker,
+        price: 0,
+        quantity,
+        fee: 0,
+        tax: 0,
+        stockPerShare: Number(this.stockPerShare) || null,
+        note: '',
+      };
+    },
     async save() {
+      if (this.kind === 'stock') {
+        const stock = this.stockFields();
+        if (!stock) return;
+        await Store.addInvestment(stock);
+        this.$emit('close', { date: stock.date });
+        return;
+      }
       const fields = this.buildFields();
       if (!fields) return;
       if (this.isNew) await Store.addDividend(fields);
@@ -244,6 +288,15 @@ const DividendFormModal = {
     // Several holdings often pay on the same day: keep date and account,
     // clear the per-holding fields.
     async saveAndAddAnother() {
+      if (this.kind === 'stock') {
+        const stock = this.stockFields();
+        if (!stock) return;
+        await Store.addInvestment(stock);
+        this.stockPerShare = '';
+        this.stockShares = '';
+        this.stockSharesTouched = false;
+        return;
+      }
       const fields = this.buildFields();
       if (!fields) return;
       await Store.addDividend(fields);
@@ -287,17 +340,34 @@ const DividendFormModal = {
               <div v-else class="field-hint">這個帳戶還沒有任何持股,請先記一筆買入</div>
             </label>
             <label>發放日 <input type="date" v-model="form.date" /></label>
+            <div v-if="isNew" class="chip-row dividend-kind">
+              <span class="chip" :class="{ selected: kind === 'cash' }" @click="kind = 'cash'">現金股利</span>
+              <span class="chip" :class="{ selected: kind === 'stock' }" @click="kind = 'stock'">股票股利(配股)</span>
+            </div>
+            <template v-if="kind === 'stock'">
+              <label v-if="market === 'TW'">每股配股(元,選填)
+                <input type="number" v-model="stockPerShare" min="0" step="0.0001" />
+                <span class="field-hint">例如配股 1 元 = 每 10 股配 1 股(面額 10 元)</span>
+              </label>
+              <label>配發股數
+                <input type="number" v-model="stockShares" min="0" step="1" @input="stockSharesTouched = true" />
+                <span class="field-hint"><template v-if="suggestedStockShares">依發放日持有 {{ heldOnDate }} 股試算,不足一股的零股已捨去;</template>以實際入帳股數為準</span>
+              </label>
+              <div class="field-hint" style="margin-top: 8px;">會記成一筆「配股」投資紀錄:持股 +{{ Number(stockShares) || 0 }} 股、成本 0,平均成本會下降,不會記成現金收入。補充保費或零股折發的現金請另外記帳。</div>
+            </template>
+            <template v-else>
             <label>每股股利{{ symbol ? '(' + symbol + ')' : '' }}
               <input type="number" v-model="form.perShare" min="0" step="0.0001" @input="perShareTouched = true" />
-              <span v-if="lastDividend" class="field-hint">上次 {{ lastDividend.date }}:每股 {{ lastDividend.dividend.perShare }}</span>
+              <span v-if="lastDividend && lastDividend.dividend.perShare" class="field-hint">上次 {{ lastDividend.date }}:每股 {{ lastDividend.dividend.perShare }}</span>
+              <span v-else class="field-hint">選填,只知道入帳金額時可以留空</span>
             </label>
             <label>持有股數
               <input type="number" v-model="form.shares" min="0" step="0.0001" @input="sharesTouched = true" />
-              <span class="field-hint">預設為發放日當天的持股({{ heldOnDate }} 股);實際以除息前一日的持股為準,不同時請自行修改</span>
+              <span class="field-hint">選填。預設為發放日當天的持股({{ heldOnDate }} 股);實際以除息前一日的持股為準,不同時請自行修改</span>
             </label>
             <label>應領金額{{ symbol ? '(' + symbol + ')' : '' }}
               <input type="number" v-model="form.gross" min="0" step="any" @input="grossTouched = true" />
-              <span class="field-hint">預設為每股 × 股數,不足一元(美股為一分)捨去;和實際入帳前的金額不同時可修改</span>
+              <span class="field-hint">有填每股和股數時會自動算出(不足一元,美股為一分,捨去)。只知道實際入帳多少時,直接填入帳金額、扣款填 0 即可</span>
             </label>
             <label>扣款{{ symbol ? '(' + symbol + ')' : '' }}
               <input type="number" v-model="form.deduction" min="0" step="any" />
@@ -309,6 +379,7 @@ const DividendFormModal = {
               </select>
             </label>
             <div class="field-hint" style="margin-top: 8px;">實領 <strong>{{ symbol }}{{ fmt(net) }}</strong>,會記成一筆「股利／配息」收入</div>
+            </template>
           </template>
         </div>
         <div class="modal-actions" :class="{ 'with-delete': !isNew }">

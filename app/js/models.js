@@ -439,6 +439,7 @@ function accountBalance(account, transactions, investments = []) {
   if (account.kind === 'brokerage') {
     for (const inv of investments) {
       if (inv.isDeleted || inv.accountId !== account.id) continue;
+      if (inv.action === 'stockDividend') continue; // shares only, no cash
       const { net } = investmentAmounts(inv);
       delta += inv.action === 'buy' ? -net : net;
     }
@@ -564,12 +565,16 @@ function newInvestment(fields) {
     date: fields.date, // 'YYYY-MM-DD'
     accountId: fields.accountId, // the 證券交割 account this trade settled through
     market: fields.market, // 'TW' | 'US' — copied from the account at entry time
-    action: fields.action, // 'buy' | 'sell'
+    // 'buy' | 'sell' | 'stockDividend' — a 配股 adds shares at no cost (price,
+    // fee and tax all 0), so it lowers the holding's average cost and moves
+    // no cash; `stockPerShare` is the 配股 amount per share (元), when given.
+    action: fields.action,
     ticker: fields.ticker,
-    price: Number(fields.price),
+    price: Number(fields.price) || 0,
     quantity: Number(fields.quantity),
     fee: Number(fields.fee) || 0,
     tax: Number(fields.tax) || 0,
+    stockPerShare: fields.action === 'stockDividend' ? Number(fields.stockPerShare) || null : null,
     note: fields.note || '',
     isDeleted: false,
     updatedAt: nowIso(),
@@ -581,6 +586,7 @@ function newInvestment(fields) {
 // at 0 for a market that doesn't have one, cheaper than a market-specific
 // branch here).
 function investmentAmounts(investment) {
+  if (investment.action === 'stockDividend') return { gross: 0, net: 0 };
   const gross = investment.price * investment.quantity;
   const net = investment.action === 'buy' ? gross + investment.fee : gross - investment.fee - investment.tax;
   return { gross, net };
@@ -596,6 +602,7 @@ function dailyInvestmentTotals(investments, yearMonth, rates = {}) {
     const day = Number(inv.date.slice(8, 10));
     const row = byDay.get(day) || { buy: 0, sell: 0 };
     // In TWD: a day can hold trades from both markets.
+    if (inv.action === 'stockDividend') continue; // no money moved
     const net = investmentAmounts(inv).net * rateOf(marketCurrency(inv.market), rates, inv.date);
     if (inv.action === 'buy') row.buy += net;
     else row.sell += net;
@@ -671,7 +678,9 @@ function holdingsSummary(investments) {
       const { net } = investmentAmounts(inv);
       let pl = 0;
       let soldCostBasis = 0;
-      if (inv.action === 'buy') {
+      // A 配股 joins the pool like a buy at no cost (net is 0), which is what
+      // lowers the average cost.
+      if (inv.action === 'buy' || inv.action === 'stockDividend') {
         quantity += inv.quantity;
         costBasis += net;
       } else {
@@ -1127,7 +1136,7 @@ function quantityHeldOn(investments, { accountId, market, ticker }, date) {
   let quantity = 0;
   for (const i of investments) {
     if (i.isDeleted || i.accountId !== accountId || i.market !== market || i.ticker !== ticker || i.date > date) continue;
-    quantity += i.action === 'buy' ? i.quantity : -i.quantity;
+    quantity += i.action === 'sell' ? -i.quantity : i.quantity;
   }
   return Math.max(0, quantity);
 }

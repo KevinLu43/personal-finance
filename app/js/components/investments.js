@@ -13,6 +13,9 @@ const InvestmentRowItem = {
     net() {
       return Models.investmentAmounts(this.investment).net;
     },
+    isStockDividend() {
+      return this.investment.action === 'stockDividend';
+    },
     companyName() {
       return window.tickerName(this.investment.market, this.investment.ticker);
     },
@@ -45,14 +48,17 @@ const InvestmentRowItem = {
   template: `
     <div class="list-row clickable" @click="$emit('edit', investment)">
       <div class="list-row-main">
-        <span class="bar-icon">{{ investment.action === 'buy' ? '🟢' : '🔴' }}</span>
+        <span class="bar-icon">{{ isStockDividend ? '🎁' : investment.action === 'buy' ? '🟢' : '🔴' }}</span>
         <span class="list-row-title">{{ investment.ticker }}</span>
         <span v-if="companyName" class="ticker-name">{{ companyName }}</span>
         <div class="list-row-sub">
-          <template v-if="showDate">{{ investment.date }} · </template>{{ investment.action === 'buy' ? '買入' : '賣出' }} · {{ fmt(investment.price) }} × {{ investment.quantity }} · {{ accountName }}
+          <template v-if="showDate">{{ investment.date }} · </template>
+          <template v-if="isStockDividend">配股<template v-if="investment.stockPerShare"> · 每股配 {{ investment.stockPerShare }} 元</template> · 成本 0 · {{ accountName }}</template>
+          <template v-else>{{ investment.action === 'buy' ? '買入' : '賣出' }} · {{ fmt(investment.price) }} × {{ investment.quantity }} · {{ accountName }}</template>
         </div>
       </div>
-      <div class="list-row-amount" :class="{ negative: investment.action === 'buy', positive: investment.action === 'sell' }">
+      <div v-if="isStockDividend" class="list-row-amount">+{{ investment.quantity }} 股</div>
+      <div v-else class="list-row-amount" :class="{ negative: investment.action === 'buy', positive: investment.action === 'sell' }">
         {{ investment.action === 'buy' ? '-' : '+' }}{{ nativeAmountText }}
         <div v-if="baseAmountText" class="list-row-sub">{{ baseAmountText }}</div>
       </div>
@@ -126,11 +132,28 @@ const InvestmentFormModal = {
       // actually charged at the time.
       feeTouched: !isNew,
       taxTouched: !isNew,
+      sharesTouched: !isNew, // 配股: 配發股數 follows 每股配股 until edited
     };
   },
   computed: {
     isNew() {
       return this.editingId === 'new';
+    },
+    isStockDividend() {
+      return this.form.action === 'stockDividend';
+    },
+    // 配股: shares held on the 配股 date (without this record), and what a
+    // Taiwan 配股 of N 元 per share works out to — par value is 10 元, so
+    // N 元 is N/10 of a share per share held, odd lots dropped.
+    heldOnDate() {
+      if (!this.selectedAccount || !this.form.ticker) return 0;
+      const others = Store.state.investments.filter((i) => i.id !== this.editingId);
+      return Models.quantityHeldOn(others, { accountId: this.selectedAccount.id, market: this.selectedAccount.market, ticker: this.form.ticker }, this.form.date);
+    },
+    suggestedStockShares() {
+      const perShare = Number(this.form.stockPerShare) || 0;
+      if (!this.selectedAccount || this.selectedAccount.market !== 'TW' || !(perShare > 0)) return '';
+      return Math.floor((this.heldOnDate * perShare) / 10 + 1e-9) || '';
     },
     // Only 證券交割 accounts settle a trade — every fee/tax figure below
     // reads this account's own configured rates, not a market-wide guess.
@@ -178,6 +201,13 @@ const InvestmentFormModal = {
     // The trade being edited may hold a ticker no longer (or not yet, mid
     // pick) in heldTickers — keep it selectable so opening an old sell to
     // fix a typo doesn't silently blank or swap its ticker out from under it.
+    // 配股 is for a stock actually held in this account (plus the record's own
+    // ticker while editing).
+    stockTickerOptions() {
+      const list = this.heldTickers.map((h) => h.ticker);
+      if (this.form.ticker && !list.includes(this.form.ticker)) list.unshift(this.form.ticker);
+      return list;
+    },
     sellTickerOptions() {
       const list = this.heldTickers
         .map((h) => ({ ticker: h.ticker, quantity: Store.sellableQuantity(h.accountId, h.market, h.ticker, this.isNew ? null : this.editingId) }))
@@ -207,6 +237,9 @@ const InvestmentFormModal = {
     'form.quantity'() {
       this.recalc();
     },
+    suggestedStockShares(n) {
+      if (this.isStockDividend && !this.sharesTouched) this.form.quantity = n;
+    },
   },
   methods: {
     tickerNameFor(ticker) {
@@ -235,6 +268,7 @@ const InvestmentFormModal = {
             quantity: inv.quantity,
             fee: inv.fee,
             tax: inv.tax,
+            stockPerShare: inv.stockPerShare || '',
             note: inv.note || '',
           };
         }
@@ -252,6 +286,7 @@ const InvestmentFormModal = {
         quantity: '',
         fee: 0,
         tax: 0,
+        stockPerShare: '',
         note: '',
       };
     },
@@ -263,6 +298,23 @@ const InvestmentFormModal = {
     buildFields() {
       const price = Number(this.form.price);
       const quantity = Number(this.form.quantity);
+      // A 配股 needs only its shares: no price, fee or tax, no cash moved.
+      if (this.isStockDividend) {
+        if (!this.form.accountId || !this.form.ticker.trim() || !(quantity > 0)) return null;
+        return {
+          date: this.form.date,
+          accountId: this.form.accountId,
+          market: this.selectedAccount.market,
+          action: 'stockDividend',
+          ticker: this.form.ticker.trim().toUpperCase(),
+          price: 0,
+          quantity,
+          fee: 0,
+          tax: 0,
+          stockPerShare: Number(this.form.stockPerShare) || null,
+          note: this.form.note.trim(),
+        };
+      }
       if (!this.form.accountId || !this.form.ticker.trim() || !price || price <= 0 || !quantity || quantity <= 0) return null;
       if (this.sellError) return null;
       return {
@@ -298,9 +350,10 @@ const InvestmentFormModal = {
       const fields = this.buildFields();
       if (!fields) return;
       await Store.addInvestment(fields);
-      this.form = { ...this.form, ticker: '', price: '', quantity: '', fee: 0, tax: 0, note: '' };
+      this.form = { ...this.form, ticker: '', price: '', quantity: '', fee: 0, tax: 0, stockPerShare: '', note: '' };
       this.feeTouched = false;
       this.taxTouched = false;
+      this.sharesTouched = false;
     },
     async removeCurrent() {
       if (this.isNew) return;
@@ -327,11 +380,18 @@ const InvestmentFormModal = {
               <select v-model="form.action">
                 <option value="buy">買入</option>
                 <option value="sell">賣出</option>
+                <option value="stockDividend">配股(股票股利)</option>
               </select>
             </label>
             <label>日期 <input type="date" v-model="form.date" /></label>
             <label>標的
-              <template v-if="form.action === 'sell'">
+              <template v-if="isStockDividend">
+                <select v-if="stockTickerOptions.length" v-model="form.ticker">
+                  <option v-for="t in stockTickerOptions" :key="t" :value="t">{{ t }}{{ tickerNameFor(t) ? ' ' + tickerNameFor(t) : '' }}</option>
+                </select>
+                <div v-else class="field-hint">這個帳戶目前沒有持股</div>
+              </template>
+              <template v-else-if="form.action === 'sell'">
                 <select v-if="sellTickerOptions.length" v-model="form.ticker">
                   <option v-for="o in sellTickerOptions" :key="o.ticker" :value="o.ticker">
                     {{ o.ticker }}{{ tickerNameFor(o.ticker) ? ' ' + tickerNameFor(o.ticker) : '' }}{{ o.quantity != null ? '(可賣 ' + o.quantity + ')' : '' }}
@@ -341,6 +401,18 @@ const InvestmentFormModal = {
               </template>
               <TickerPickerField v-else v-model="form.ticker" :market="selectedAccount.market" />
             </label>
+            <template v-if="isStockDividend">
+              <label v-if="selectedAccount && selectedAccount.market === 'TW'">每股配股(元,選填)
+                <input type="number" v-model="form.stockPerShare" min="0" step="0.0001" />
+                <span class="field-hint">例如配股 1 元 = 每 10 股配 1 股(面額 10 元)</span>
+              </label>
+              <label>配發股數 <input type="number" v-model="form.quantity" min="0" step="1" @input="sharesTouched = true" />
+                <span class="field-hint">
+                  <template v-if="suggestedStockShares">依 {{ form.date }} 持有 {{ heldOnDate }} 股試算,不足一股的零股已捨去;</template>以實際入帳股數為準。配股成本為 0,會讓平均成本下降,不會產生現金收入
+                </span>
+              </label>
+            </template>
+            <template v-else>
             <label>價格 <input type="number" v-model="form.price" min="0" step="0.01" /></label>
             <label>數量 <input type="number" v-model="form.quantity" min="0" step="0.0001" />
               <span v-if="sellError" class="field-hint negative">{{ sellError }}</span>
@@ -355,6 +427,7 @@ const InvestmentFormModal = {
                 依帳戶設定的{{ tickerIsEtf ? ' ETF ' : ' 股票 ' }}稅率試算(依代碼開頭猜測是否為 ETF,可自行調整)
               </span>
             </label>
+            </template>
             <label>備註 <input v-model="form.note" /></label>
           </template>
         </div>

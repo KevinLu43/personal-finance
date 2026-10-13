@@ -3,7 +3,7 @@
 // tasks with different rhythms, and stacking both under one calendar made
 // the recording screen longer without making either easier to use.
 
-const INVESTMENT_ACTION_LABELS = { buy: '買入', sell: '賣出' };
+const INVESTMENT_ACTION_LABELS = { buy: '買入', sell: '賣出', stockDividend: '配股' };
 
 // 資產配置's four fixed colors, keyed by categoryOptions' value — distinct
 // from --income/--expense/--warning elsewhere so this donut never reads as
@@ -362,7 +362,7 @@ const InvestmentOverviewView = {
           ? net * Models.rateOf(Models.marketCurrency(i.market), Store.state.rateHistory, i.date)
           : net;
         if (i.action === 'buy') group.buyTotal += amount;
-        else group.sellTotal += amount;
+        else if (i.action === 'sell') group.sellTotal += amount;
       }
       return groups;
     },
