@@ -93,6 +93,8 @@ const DashboardAccountGroups = {
 // folded under 其他 render through the same code.
 const LabelDetail = {
   props: ['detail'],
+  // A row carrying `tx` (a 消費明細 line) opens that transaction when tapped.
+  emits: ['edit'],
   data() {
     // What the operator has toggled; a section not in here follows its own
     // default (`open` from the parent — the short ones open, the long ones folded).
@@ -113,7 +115,7 @@ const LabelDetail = {
         <span class="expand-arrow" :class="{ open: isOpen(sec) }">›</span>{{ sec.title }}<span class="heading-count">{{ sec.rows.length }}</span>
       </div>
       <template v-if="isOpen(sec)">
-        <div v-for="r in sec.rows" :key="r.key" class="category-detail-row">
+        <div v-for="r in sec.rows" :key="r.key" class="category-detail-row" :class="{ 'clickable-row': r.tx }" @click="r.tx && $emit('edit', r.tx)">
           <span class="category-detail-note">{{ r.name }}</span>
           <span class="category-detail-bar-track">
             <span class="category-detail-bar-fill" :style="{ width: r.pct + '%', background: r.color }"></span>
@@ -157,8 +159,8 @@ const DashboardView = {
       incomeOtherOpen: false, // 收入分類's folded 其他 row
       fixedExpenseOtherOpen: false, // 固定支出（月）'s folded 其他 row
       creditDebtOtherOpen: false, // 信用卡欠款's folded 其他 row
-      creditSpendOtherOpen: false, // 信用卡刷卡's folded 其他 row
-      expandedCreditCardId: null, // year view: which 信用卡刷卡 card's monthly trend is open, one at a time
+      creditSpendOtherOpen: false, // 信用卡消費's folded 其他 row
+      expandedCreditCardId: null, // which 信用卡消費 card's breakdown is open, one at a time
       expandedDate: null, // which 記帳明細 date group is expanded, one at a time
       expandedMonth: null, // year view: which 記帳明細 month is open, one at a time
       trendPick: null, // index of the month picked on the trend chart, for the readout
@@ -171,16 +173,19 @@ const DashboardView = {
     // A different year or mode is a different list; don't carry an open month over.
     viewMode() {
       this.clearDonutFocus();
+      this.expandedCreditCardId = null;
       this.trendPick = null;
       this.expandedMonth = null;
       this.expandedDate = null;
     },
     month() {
       this.clearDonutFocus();
+      this.expandedCreditCardId = null;
       this.trendPick = null;
     },
     year() {
       this.clearDonutFocus();
+      this.expandedCreditCardId = null;
       this.trendPick = null;
       this.fixedExpensePick = null;
       this.expandedMonth = null;
@@ -712,6 +717,20 @@ const DashboardView = {
     creditCardSpendTotal() {
       return this.creditCardSpendBreakdown.reduce((s, row) => s + row.amount, 0);
     },
+    // Installment purchases swiped in the period. The panel's amounts are
+    // what reached the cards' bills (one period of a plan a month), so a big
+    // purchase split into installments would otherwise never show at its
+    // full size here; this line names it.
+    newInstallmentPlans() {
+      return Store.state.recurringTransactions
+        .filter((r) => r.installment && r.installment.purchaseDate && r.installment.purchaseDate.startsWith(this.periodPrefix))
+        .map((r) => {
+          const card = Store.state.accounts.find((a) => a.id === r.accountId);
+          const category = Store.state.categories.find((c) => c.id === r.categoryId);
+          const item = r.installment.item || r.note || (category ? category.name : '');
+          return `${item} ${this.fmt(r.installment.total)}(${r.installment.count} 期${card ? ' · ' + card.name : ''})`;
+        });
+    },
     creditCardSpendRows() {
       return this.capBreakdown(this.creditCardSpendBreakdown, 'category');
     },
@@ -841,10 +860,59 @@ const DashboardView = {
       const ids = row.otherRows ? new Set(row.otherRows.map((d) => d.category.id)) : new Set([row.category.id]);
       return this.monthlyAmountsForCategories(ids);
     },
-    // 信用卡刷卡(年度)'s 逐月比較, one card at a time — 其他 keeps its existing
+    // 信用卡消費's per-card breakdown, one card at a time — 其他 keeps its existing
     // fold/unfold instead of gaining a second meaning here.
     toggleCreditCardExpand(accountId) {
       this.expandedCreditCardId = this.expandedCreditCardId === accountId ? null : accountId;
+    },
+    // Everything one card's expanded row shows, in LabelDetail's shape: by
+    // category, by label, each purchase (tap to edit), and in year view the
+    // month-by-month comparison. Reads the same period expenses as the row.
+    creditCardDetail(accountId, color) {
+      const txs = this.periodExpenseTransactions.filter((t) => t.accountId === accountId);
+      const total = txs.reduce((s, t) => s + t.amount, 0);
+      const share = (amount) => (total > 0 ? (amount / total) * 100 : 0);
+      const byCategory = new Map();
+      const byLabel = new Map();
+      for (const t of txs) {
+        byCategory.set(t.categoryId || '', (byCategory.get(t.categoryId || '') || 0) + t.amount);
+        const labels = Store.labelsForTransaction(t.id);
+        if (!labels.length) byLabel.set('', (byLabel.get('') || 0) + t.amount);
+        for (const l of labels) byLabel.set(l.id, (byLabel.get(l.id) || 0) + t.amount);
+      }
+      const categoryRows = [...byCategory.entries()].sort((a, b) => b[1] - a[1]).map(([id, amount]) => {
+        const c = Store.state.categories.find((x) => x.id === id);
+        return { key: id || '__none__', name: c ? `${c.icon || ''} ${c.name}` : '(未分類)', color: (c && c.color) || '#adb5bd', pct: share(amount), text: this.fmt(amount) };
+      });
+      const labelRows = [...byLabel.entries()].sort((a, b) => b[1] - a[1]).map(([id, amount]) => {
+        const l = Store.state.labels.find((x) => x.id === id);
+        return { key: id || '__none__', name: l ? `${l.icon || '🏷️'} ${l.name}` : '(無標籤)', color: (l && l.color) || '#adb5bd', pct: share(amount), text: this.fmt(amount) };
+      });
+      const max = Math.max(...txs.map((t) => t.amount), 1);
+      const itemRows = txs
+        .slice()
+        .sort((a, b) => (a.date === b.date ? (a.updatedAt < b.updatedAt ? 1 : -1) : a.date < b.date ? 1 : -1))
+        .map((t) => {
+          const labels = Store.labelsForTransaction(t.id).map((l) => l.name);
+          const c = Store.state.categories.find((x) => x.id === t.categoryId);
+          // An installment period reads by its note ("iPhone 分期 2/12 ..."), the rest like a ledger row.
+          const installment = Models.transactionSource(t, Store.state.recurringTransactions) === '分期';
+          const what = installment ? t.note : labels.length ? labels.join('、') : (c ? c.name : '(未分類)');
+          return { key: t.id, tx: t, name: `${Number(t.date.slice(5, 7))}/${Number(t.date.slice(8, 10))} ${what}`, color, pct: (t.amount / max) * 100, text: this.fmt(t.amount) };
+        });
+      const sections = [
+        { title: '依分類', open: true, rows: categoryRows },
+        { title: '依標籤', open: false, rows: labelRows },
+        { title: '消費明細', open: false, rows: itemRows },
+      ];
+      if (this.viewMode === 'year') {
+        sections.push({
+          title: '逐月比較',
+          open: true,
+          rows: this.creditCardMonthlyBreakdown(accountId).map((d) => ({ key: 'm' + d.month, name: `${d.month}月`, color, pct: d.pct, text: this.fmt(d.amount) })),
+        });
+      }
+      return { summary: `${txs.length} 筆 · 共 ${this.fmt(total)}`, sections };
     },
     creditCardMonthlyBreakdown(accountId) {
       const totals = new Array(12).fill(0);
@@ -1340,37 +1408,37 @@ const DashboardView = {
         </template>
       </section>
 
-      <section style="order: 7;" v-if="creditCardSpendBreakdown.length" class="panel">
-        <h3>{{ viewMode === 'year' ? '全年信用卡刷卡' : '本月信用卡刷卡' }}<span class="muted"> · 共 {{ fmt(creditCardSpendTotal) }}</span></h3>
+      <section style="order: 7;" v-if="creditCardSpendBreakdown.length || newInstallmentPlans.length" class="panel">
+        <h3>{{ viewMode === 'year' ? '全年信用卡消費' : '本月信用卡消費' }}<span class="muted"> · 共 {{ fmt(creditCardSpendTotal) }}</span></h3>
+        <div class="muted asset-formula">入帳到帳單上的金額,分期依每期計</div>
+        <div v-if="newInstallmentPlans.length" class="muted asset-formula">{{ viewMode === 'year' ? '今年' : '本月' }}新刷分期:{{ newInstallmentPlans.join('、') }}</div>
         <DonutChart :segments="creditCardSpendSegments" :focus="donutFocusIndex('creditCardSpendSegments', creditCardSpendSegments)" @focus="toggleDonutFocus('creditCardSpendSegments', $event)" />
         <div v-for="(row, i) in creditCardSpendRows" :key="row.category.name" :class="donutLegendClass('creditCardSpendSegments', creditCardSpendSegments, i)">
           <div
             class="bar-row clickable"
-            @click="row.otherRows ? toggleCreditSpendOther() : (viewMode === 'year' && toggleCreditCardExpand(row.accountId)); toggleDonutFocus('creditCardSpendSegments', i)"
+            @click="row.otherRows ? toggleCreditSpendOther() : toggleCreditCardExpand(row.accountId); toggleDonutFocus('creditCardSpendSegments', i)"
           >
             <span class="legend-swatch" :style="{ background: row.category.color }"></span>
             <span class="bar-name">{{ row.category.name }}</span>
-            <span v-if="row.otherRows || viewMode === 'year'" class="expand-arrow" :class="{ open: row.otherRows ? creditSpendOtherOpen : expandedCreditCardId === row.accountId }">›</span>
+            <span class="expand-arrow" :class="{ open: row.otherRows ? creditSpendOtherOpen : expandedCreditCardId === row.accountId }">›</span>
             <span class="bar-amount">{{ fmt(row.amount) }} · {{ fmtCreditCardSpendPercent(row.amount) }}</span>
           </div>
           <div v-if="row.otherRows && creditSpendOtherOpen" class="category-detail">
-            <div v-for="d in row.otherRows" :key="d.category.name" class="category-detail-row">
-              <span class="category-detail-note"><span class="legend-swatch" :style="{ background: d.category.color }"></span>{{ d.category.name }}</span>
-              <span class="category-detail-bar-track">
-                <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
-              </span>
-              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-            </div>
+            <template v-for="d in row.otherRows" :key="d.category.name">
+              <div class="category-detail-row clickable-row" @click="toggleCreditCardExpand(d.accountId)">
+                <span class="category-detail-note"><span class="expand-arrow" :class="{ open: expandedCreditCardId === d.accountId }">›</span><span class="legend-swatch" :style="{ background: d.category.color }"></span>{{ d.category.name }}</span>
+                <span class="category-detail-bar-track">
+                  <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color }"></span>
+                </span>
+                <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+              </div>
+              <div v-if="expandedCreditCardId === d.accountId" class="category-detail">
+                <LabelDetail :detail="creditCardDetail(d.accountId, d.category.color)" @edit="openEdit" />
+              </div>
+            </template>
           </div>
-          <div v-if="!row.otherRows && viewMode === 'year' && expandedCreditCardId === row.accountId" class="category-detail">
-            <div class="category-detail-heading">逐月比較</div>
-            <div v-for="d in creditCardMonthlyBreakdown(row.accountId)" :key="d.month" class="category-detail-row">
-              <span class="category-detail-note">{{ d.month }}月</span>
-              <span class="category-detail-bar-track">
-                <span class="category-detail-bar-fill" :style="{ width: d.pct + '%', background: row.category.color }"></span>
-              </span>
-              <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-            </div>
+          <div v-if="!row.otherRows && expandedCreditCardId === row.accountId" class="category-detail">
+            <LabelDetail :detail="creditCardDetail(row.accountId, row.category.color)" @edit="openEdit" />
           </div>
         </div>
       </section>
