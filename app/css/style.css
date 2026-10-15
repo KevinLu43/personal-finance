@@ -1319,6 +1319,10 @@ button.primary {
 /* Cash dividends listed under a holding in 投資總覽. */
 .dividend-add { padding: 4px 0 8px 28px; }
 .dividend-kind { margin: -4px 0 12px; }
+.holding-amounts { text-align: right; }
+.holding-amounts .list-row-sub { font-weight: 600; }
+.holding-amounts .list-row-sub.positive { color: var(--income); }
+.holding-amounts .list-row-sub.negative { color: var(--expense); }
 .dividend-add button { font-size: 12px; }
 .header-actions { display: inline-flex; gap: 8px; }
 

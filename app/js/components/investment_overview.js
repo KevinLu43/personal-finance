@@ -696,15 +696,24 @@ const InvestmentOverviewView = {
                   <div class="list-row-sub">
                     {{ accountName(h) }}<template v-if="h.quantity > 0"> · {{ '持有 ' + h.quantity + ' 股 · 均價 ' + (currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '') + fmtPrice(h.avgCost) }}</template>
                     <span v-if="pledgedFor(h) > 0"> · 質押 {{ pledgedFor(h) }} 股(可賣 {{ Math.max(0, h.quantity - pledgedFor(h)) }})</span>
-                    <span v-if="dividendOf(h)" class="positive"> · 股利 +{{ fmtNative(dividendOf(h).total) }}<template v-if="dividendYieldText(h)"> · 殖利率 {{ dividendYieldText(h) }}</template></span>
+                    <span v-if="h.quantity > 0 && dividendYieldText(h)"> · 殖利率 {{ dividendYieldText(h) }}</span>
+                    <span v-if="!(h.quantity > 0) && dividendOf(h)" class="positive"> · 股利 +{{ fmtNative(dividendOf(h).total) }}</span>
                     <template v-if="clearedReturn(h)">
                       · <span :class="{ positive: clearedReturn(h).total.value > 0, negative: clearedReturn(h).total.value < 0 }">報酬率 {{ clearedReturn(h).total.text }}<template v-if="clearedReturn(h).price">(含股利)</template></span>
                       <span v-if="clearedReturn(h).price" :class="{ positive: clearedReturn(h).price.value > 0, negative: clearedReturn(h).price.value < 0 }">· 價差 {{ clearedReturn(h).price.text }}</span>
                     </template>
                   </div>
                 </div>
-                <div class="list-row-amount" :class="{ negative: finalPL(h) < 0, positive: finalPL(h) > 0 }">
-                  <span v-if="!(h.quantity > 0)" class="amount-note">最終損益 </span>{{ finalPL(h) > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(finalPL(h), currentCurrency) }}
+                <!-- Held: what is invested in it now, with what it has already
+                     returned (sold, paid out) stacked under. Cleared: its 最終損益. -->
+                <div v-if="h.quantity > 0" class="list-row-amount holding-amounts">
+                  <span class="amount-note">成本 </span>{{ fmtNative(h.costBasis) }}
+                  <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.costBasis)) }}</div>
+                  <div v-if="h.realizedPL !== 0" class="list-row-sub" :class="h.realizedPL > 0 ? 'positive' : 'negative'">已實現 {{ h.realizedPL > 0 ? '+' : '' }}{{ fmtNative(h.realizedPL) }}</div>
+                  <div v-if="dividendOf(h)" class="list-row-sub positive">股利 +{{ fmtNative(dividendOf(h).total) }}</div>
+                </div>
+                <div v-else class="list-row-amount" :class="{ negative: finalPL(h) < 0, positive: finalPL(h) > 0 }">
+                  <span class="amount-note">最終損益 </span>{{ finalPL(h) > 0 ? '+' : '' }}{{ currentCurrency !== 'TWD' ? currencySymbol(currentCurrency) : '' }}{{ fmtCur(finalPL(h), currentCurrency) }}
                   <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(finalPL(h))) }}</div>
                 </div>
                 <span class="expand-arrow" :class="{ open: expandedHoldingKey === holdingKey(h) }">›</span>
