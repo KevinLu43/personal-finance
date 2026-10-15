@@ -15,6 +15,11 @@
 
 * { box-sizing: border-box; }
 
+/* Keep room for the scrollbar even on a short page, so switching tabs never
+   shifts the layout sideways (記帳 scrolls, 投資 often doesn't, and the
+   calendars would otherwise come out a few pixels apart). */
+html { scrollbar-gutter: stable; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
@@ -1126,7 +1131,8 @@ button.primary {
   .holdings-grid.no-donut .holdings-trades { grid-row: 1 / span 2; }
   .holdings-grid.no-holdings .holdings-trades { grid-column: 1 / -1; grid-row: auto; }
 
-  /* 記帳: the calendar takes the wider left column with 固定收支 under it —
+  /* 記帳 and 投資 (which has no 固定收支 panel): the calendar takes the wider
+     left column with 固定收支 under it —
      neither moves when another day is picked — and the selected day's records
      run down the right, instead of a short day panel beside the calendar and
      固定收支 stretched across the whole page underneath. */

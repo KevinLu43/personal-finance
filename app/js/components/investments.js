@@ -593,8 +593,8 @@ const InvestmentsView = {
         </span>
       </div>
 
-      <div class="panel-grid">
-      <section class="panel">
+      <div class="panel-grid ledger-grid">
+      <section class="panel ledger-calendar">
         <div class="month-nav">
           <button @click="shiftMonth(-1)">‹</button>
           <span class="month-label">{{ year }} 年 {{ month }} 月</span>
@@ -622,7 +622,7 @@ const InvestmentsView = {
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel ledger-day">
         <div class="view-header">
           <h3>{{ selectedDay }}</h3>
           <span class="header-actions">
