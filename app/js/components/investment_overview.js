@@ -481,6 +481,14 @@ const InvestmentOverviewView = {
       if (h.quantity > 0) return h.realizedPL;
       return h.realizedPL + (this.dividendOf(h) ? this.dividendOf(h).total : 0);
     },
+    // A holding still owned but partly sold: the return on the shares already
+    // sold — its realized P/L against what those shares cost, the same rule
+    // as a cleared holding's 價差 rate. Empty when nothing has been sold.
+    realizedRateText(h) {
+      if (!(h.soldCost > 0) || h.realizedPL === 0) return '';
+      const pct = (h.realizedPL / h.soldCost) * 100;
+      return (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+    },
     // A cleared holding's return on what the sold shares cost, with dividends
     // (`total`) and, when there were any, without (`price`, 價差 alone). Only
     // once nothing is held, so the rate is final rather than a partial one.
@@ -709,7 +717,7 @@ const InvestmentOverviewView = {
                 <div v-if="h.quantity > 0" class="list-row-amount holding-amounts">
                   <span class="amount-note">成本 </span>{{ fmtNative(h.costBasis) }}
                   <div v-if="currentCurrency !== 'TWD'" class="list-row-sub">≈ NT$ {{ fmt(toBase(h.costBasis)) }}</div>
-                  <div v-if="h.realizedPL !== 0" class="list-row-sub" :class="h.realizedPL > 0 ? 'positive' : 'negative'">已實現 {{ h.realizedPL > 0 ? '+' : '' }}{{ fmtNative(h.realizedPL) }}</div>
+                  <div v-if="h.realizedPL !== 0" class="list-row-sub" :class="h.realizedPL > 0 ? 'positive' : 'negative'">已實現 {{ h.realizedPL > 0 ? '+' : '' }}{{ fmtNative(h.realizedPL) }}<template v-if="realizedRateText(h)">({{ realizedRateText(h) }})</template></div>
                   <div v-if="dividendOf(h)" class="list-row-sub positive">股利 +{{ fmtNative(dividendOf(h).total) }}</div>
                 </div>
                 <div v-else class="list-row-amount" :class="{ negative: finalPL(h) < 0, positive: finalPL(h) > 0 }">
