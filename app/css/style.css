@@ -444,6 +444,11 @@ body {
   font-size: 13px;
 }
 .month-table-row:last-child { border-bottom: none; }
+/* 逐月明細's 全年 / 月平均 rows, set off from the months above. */
+.month-table-total { margin-top: -1px; border-top: 2px solid var(--muted); font-weight: 700; }
+.month-table-total .month-table-cell.month { color: var(--ink); }
+.month-table-average .month-table-cell.month { flex-direction: column; align-items: flex-start; }
+.month-table-average .month-table-cell.month .muted { font-size: 11px; }
 
 .month-table-header {
   font-size: 11px;

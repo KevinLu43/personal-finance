@@ -229,6 +229,21 @@ const DashboardView = {
     yearTrendMonths() {
       return Store.monthlyTrend(`${this.year}-12`, 12);
     },
+    // 逐月明細's closing rows: the year's totals, and the monthly average over
+    // the months that have happened (all 12 for a past year, through this
+    // month for the current one — the empty months ahead would only drag it
+    // down). No average for a year still to come.
+    yearTableFooter() {
+      const sum = (key) => this.yearTrendMonths.reduce((s, m) => s + m[key], 0);
+      const total = { income: sum('income'), expense: sum('expense'), net: sum('net') };
+      const today = Models.localToday();
+      const thisYear = Number(today.slice(0, 4));
+      const months = this.year < thisYear ? 12 : this.year === thisYear ? Number(today.slice(5, 7)) : 0;
+      const average = months
+        ? { income: Math.round(total.income / months), expense: Math.round(total.expense / months), net: Math.round(total.net / months), months }
+        : null;
+      return { total, average };
+    },
 
     // --- Whichever mode is active, read through one name ---
     // The date prefix that scopes "this period" — one owner rather than
@@ -1279,6 +1294,18 @@ const DashboardView = {
           <span class="month-table-cell positive">{{ fmt(m.income) }}</span>
           <span class="month-table-cell negative">{{ fmt(m.expense) }}</span>
           <span class="month-table-cell" :class="{ negative: m.net < 0, positive: m.net > 0 }">{{ fmt(m.net) }}</span>
+        </div>
+        <div class="month-table-row month-table-total">
+          <span class="month-table-cell month">全年</span>
+          <span class="month-table-cell positive">{{ fmt(yearTableFooter.total.income) }}</span>
+          <span class="month-table-cell negative">{{ fmt(yearTableFooter.total.expense) }}</span>
+          <span class="month-table-cell" :class="{ negative: yearTableFooter.total.net < 0, positive: yearTableFooter.total.net > 0 }">{{ fmt(yearTableFooter.total.net) }}</span>
+        </div>
+        <div v-if="yearTableFooter.average" class="month-table-row month-table-average">
+          <span class="month-table-cell month">月平均<span v-if="yearTableFooter.average.months < 12" class="muted">1–{{ yearTableFooter.average.months }} 月</span></span>
+          <span class="month-table-cell positive">{{ fmt(yearTableFooter.average.income) }}</span>
+          <span class="month-table-cell negative">{{ fmt(yearTableFooter.average.expense) }}</span>
+          <span class="month-table-cell" :class="{ negative: yearTableFooter.average.net < 0, positive: yearTableFooter.average.net > 0 }">{{ fmt(yearTableFooter.average.net) }}</span>
         </div>
       </section>
 
