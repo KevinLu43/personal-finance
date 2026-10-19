@@ -205,6 +205,9 @@ const TransactionFormModal = {
       installmentCount: 1, // 分期數 — 1 is no installments, booked as one expense
       installmentRatePct: 0, // 年利率 (%), for an installment purchase
       scheduleOpen: false, // the per-period list under the installment summary
+      bookPlanIds: [], // card payment: installment plans whose due periods this payment settles
+      bookPlanTouched: false, // until ticked by hand, bookPlanIds follows each plan's default
+      unlinkIds: [], // editing a card payment: the periods it booked that are unticked (taken back on save)
     };
   },
   computed: {
@@ -240,9 +243,9 @@ const TransactionFormModal = {
       if (this.installmentPeriods < 2 || !(amount > 0)) return null;
       const schedule = Models.installmentSchedule(amount, this.installmentPeriods, (Number(this.installmentRatePct) || 0) / 100);
       const interest = schedule.reduce((s, p) => s + p.interest, 0);
-      const statementDay = this.selectedAccount && this.selectedAccount.statementDay;
-      const firstDue = Models.installmentFirstDue(this.form.date, statementDay);
-      return { schedule, interest, total: amount + interest, statementDay, firstDue };
+      const firstDue = Models.installmentFirstPayment(this.form.date, this.selectedAccount);
+      const paymentDay = this.selectedAccount && this.selectedAccount.paymentDay;
+      return { schedule, interest, total: amount + interest, paymentDay, firstDue };
     },
     // The picked card's limit, debt and unbilled installments — the hint
     // under the account field, and whether this entry would go over.
@@ -261,7 +264,62 @@ const TransactionFormModal = {
     toBalanceHint() {
       if (this.form.type !== 'transfer') return null;
       const received = this.crossCurrency ? Number(this.form.toAmount) || this.suggestedToAmount : Number(this.form.amount) || 0;
-      return this.balanceHint(this.form.toAccountId, received);
+      // Installment periods ticked below are booked onto the card with this payment.
+      return this.balanceHint(this.form.toAccountId, received - this.bookedInstallmentTotal);
+    },
+    payingCard() {
+      if (this.form.type !== 'transfer') return null;
+      const card = Store.state.accounts.find((a) => a.id === this.form.toAccountId);
+      return card && card.kind === 'credit_card' ? card : null;
+    },
+    // Paying a card bill settles its installment periods too: each running
+    // plan on the card offers the periods falling due by this payment (its
+    // 繳款日 within about two weeks of the payment date, overdue ones
+    // included), ticked by default; a plan with none due says which period
+    // was booked last and when the next is paid.
+    cardPaymentPlans() {
+      const card = this.payingCard;
+      if (!card) return [];
+      const horizon = this.addDays(this.form.date, 15);
+      return Store.state.recurringTransactions
+        .filter((r) => r.installment && r.accountId === card.id && !r.isArchived && r.remainingOccurrences > 0)
+        .map((r) => {
+          const index = Models.installmentIndex(r);
+          const category = Store.state.categories.find((c) => c.id === r.categoryId);
+          const item = r.installment.item || r.note || (category ? category.name : '');
+          let periods = 0;
+          let cursor = r.nextDueDate;
+          while (periods < r.remainingOccurrences && cursor <= horizon) {
+            periods++;
+            cursor = Models.addMonthClamped(cursor, r.anchorDay);
+          }
+          let amount = 0;
+          for (let k = 0; k < periods; k++) amount += Models.recurringAmountAt(r, k);
+          // With nothing due, say which period was booked last — the bill being
+          // paid most likely held it already — rather than offering the next.
+          const last = Store.bookedInstallmentPeriods(r.id)[0];
+          return {
+            id: r.id, item, index, count: periods, of: r.installment.count, amount, due: periods > 0,
+            dueDate: Models.businessDayOnOrAfter(r.nextDueDate), overdue: Models.businessDayOnOrAfter(r.nextDueDate) < this.form.date,
+            lastIndex: index, lastDate: last ? last.date : null,
+          };
+        });
+    },
+    // Editing a card payment: the installment periods it booked. Only a
+    // plan's latest period can be taken back (they run in order).
+    linkedPeriods() {
+      if (this.isNew || !this.payingCard) return [];
+      return Store.periodsPaidBy(this.editingId).map((t) => ({
+        id: t.id, note: t.note, amount: t.amount, canUnlink: Store.isLatestInstallmentPeriod(t),
+      }));
+    },
+    bookedInstallmentTotal() {
+      return this.cardPaymentPlans.filter((p) => p.due && this.bookPlanIds.includes(p.id)).reduce((s, p) => s + p.amount, 0);
+    },
+    // What this bill comes to: what the card owes now plus the periods ticked.
+    cardBillTotal() {
+      if (!this.payingCard) return 0;
+      return Math.max(0, Store.accountBalance(this.payingCard)) + this.bookedInstallmentTotal;
     },
     overLimit() {
       const s = this.cardStatus;
@@ -343,6 +401,14 @@ const TransactionFormModal = {
     },
   },
   watch: {
+    // Until ticked by hand, a card payment settles every installment period
+    // falling due by it (and none of the plans with nothing due yet).
+    cardPaymentPlans(plans) {
+      // Defaults are for a new payment only; an edit changes nothing unless ticked
+      // (and its own save, taking a period back, must not tick it again).
+      if (this.bookPlanTouched || !this.isNew) return;
+      this.bookPlanIds = plans.filter((p) => p.due).map((p) => p.id);
+    },
     // Leaving 轉帳 while a 證券交割 account is picked would leave a value the
     // select no longer lists, so fall back to a bookable account.
     'form.type'(type) {
@@ -353,6 +419,15 @@ const TransactionFormModal = {
       const fallback = bookable.find((a) => a.isDefault) || bookable[0];
       this.form.accountId = fallback ? fallback.id : '';
     },
+  },
+  mounted() {
+    // Editing a card payment that settled no installment period while the
+    // card stands overpaid: the bill most likely held the periods due by it,
+    // so they start ticked (saving then books them with this payment).
+    if (this.isNew || !this.payingCard || this.linkedPeriods.length) return;
+    if (Store.accountBalance(this.payingCard) < 0) {
+      this.bookPlanIds = this.cardPaymentPlans.filter((p) => p.due).map((p) => p.id);
+    }
   },
   methods: {
     buildForm() {
@@ -440,7 +515,9 @@ const TransactionFormModal = {
       const label = debt ? '目前欠款' : account.kind === 'brokerage' ? '現金餘額' : '目前餘額';
       // An entry being edited is already in the balance, so only a new one
       // gets the "after" figure.
-      if (!this.isNew || !delta) return { text: `${label} ${money(now)}`, short: false };
+      // A delta of 0 with an amount entered (a card payment that ticked
+      // installment periods matching it) still shows where it lands.
+      if (!this.isNew || !(Number(this.form.amount) > 0)) return { text: `${label} ${money(now)}`, short: false };
       const after = debt ? now - delta : now + delta;
       const verb = this.form.type === 'transfer' ? '轉帳後' : '記帳後';
       const short = !debt && after < 0;
@@ -452,8 +529,38 @@ const TransactionFormModal = {
       if (fields.type === 'expense' && this.installmentPeriods > 1) {
         await Store.addInstallmentPurchase(fields, this.form.labelNames, this.installmentPeriods, (Number(this.installmentRatePct) || 0) / 100);
       } else {
-        await Store.addTransaction(fields, this.form.labelNames);
+        const t = await Store.addTransaction(fields, this.form.labelNames);
+        if (fields.type === 'transfer') await this.bookTickedPeriods(t.id, fields.date);
       }
+      this.bookPlanIds = [];
+      this.bookPlanTouched = false;
+    },
+    // A card payment books the installment periods it settles, on its own
+    // date, each naming the payment (paidBy) so it can be undone with it.
+    async bookTickedPeriods(paymentId, date) {
+      if (!this.payingCard) return;
+      for (const plan of this.cardPaymentPlans.filter((p) => p.due && this.bookPlanIds.includes(p.id))) {
+        for (let k = 0; k < plan.count; k++) await Store.bookNextInstallmentNow(plan.id, date, paymentId);
+      }
+    },
+    toggleUnlink(id) {
+      const i = this.unlinkIds.indexOf(id);
+      if (i === -1) this.unlinkIds.push(id);
+      else this.unlinkIds.splice(i, 1);
+    },
+    addDays(date, days) {
+      const d = new Date(date + 'T00:00:00');
+      d.setDate(d.getDate() + days);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    },
+    fillCardBill() {
+      this.form.amount = this.cardBillTotal || '';
+    },
+    toggleBookPlan(id) {
+      this.bookPlanTouched = true;
+      const i = this.bookPlanIds.indexOf(id);
+      if (i === -1) this.bookPlanIds.push(id);
+      else this.bookPlanIds.splice(i, 1);
     },
     async save() {
       const fields = this.buildFields();
@@ -461,7 +568,16 @@ const TransactionFormModal = {
       if (this.isNew) {
         await this.addFields(fields);
       } else {
+        // Periods unticked go first (latest first), then any newly ticked ones.
+        const linked = Store.periodsPaidBy(this.editingId);
+        const toUnlink = linked.filter((t) => this.unlinkIds.includes(t.id));
         await Store.updateTransaction(this.editingId, fields, this.form.labelNames);
+        for (const period of toUnlink) await Store.unbookInstallmentPeriod(period);
+        // Periods it keeps that were booked before paidBy existed now name it.
+        for (const period of linked) {
+          if (!period.paidBy && !this.unlinkIds.includes(period.id)) await Store.updateTransaction(period.id, { paidBy: this.editingId });
+        }
+        if (fields.type === 'transfer') await this.bookTickedPeriods(this.editingId, fields.date);
       }
       this.$emit('close', { date: fields.date });
     },
@@ -534,8 +650,7 @@ const TransactionFormModal = {
             </div>
             <div class="muted">總利息 {{ fmt(installmentPlan.interest) }} · 總繳款 {{ fmt(installmentPlan.total) }}</div>
             <div class="muted">
-              <template v-if="installmentPlan.statementDay">依結帳日每月 {{ installmentPlan.statementDay }} 日記一期,第一期 {{ installmentPlan.firstDue.slice(5).replace('-', '/') }}</template>
-              <template v-else>每月 {{ Number(form.date.slice(8, 10)) }} 日記一期(這張卡沒設結帳日,到「帳戶」頁設定後會對齊帳單)</template>
+              每期在繳卡費時勾選入帳,第一期預計 {{ installmentPlan.firstDue.slice(5).replace('-', '/') }} 繳款<template v-if="!installmentPlan.paymentDay">(這張卡沒設繳款日,到「帳戶」頁設定後會對齊)</template>
               · 會出現在「固定收支」</div>
             <button type="button" class="link-button" @click="scheduleOpen = !scheduleOpen">{{ scheduleOpen ? '收起各期明細' : '查看各期明細' }}</button>
             <div v-if="scheduleOpen" class="installment-table">
@@ -553,6 +668,27 @@ const TransactionFormModal = {
               </optgroup>
             </select>
             <span v-if="toBalanceHint" class="field-hint" :class="{ negative: toBalanceHint.short }">{{ toBalanceHint.text }}</span>
+            <div v-if="cardPaymentPlans.length || linkedPeriods.length" class="card-payment-plans">
+              <div class="field-hint">這次繳款包含的分期(勾選的期數會在繳款這天入帳):</div>
+              <label v-for="t in linkedPeriods" :key="t.id" class="card-payment-plan">
+                <input type="checkbox" :checked="!unlinkIds.includes(t.id)" :disabled="!t.canUnlink" @change="toggleUnlink(t.id)" />
+                <span>{{ t.note }} {{ fmt(t.amount) }}<span class="muted">({{ unlinkIds.includes(t.id) ? '儲存後撤回這一期' : '已隨這筆繳款入帳' }}{{ t.canUnlink ? '' : ',之後的期數已入帳,不能單獨撤回' }})</span></span>
+              </label>
+              <template v-for="p in cardPaymentPlans" :key="p.id">
+                <label v-if="p.due" class="card-payment-plan">
+                  <input type="checkbox" :checked="bookPlanIds.includes(p.id)" @change="toggleBookPlan(p.id)" />
+                  <span>
+                    {{ p.item }} 第 {{ p.count > 1 ? (p.index + 1) + '–' + (p.index + p.count) : p.index + 1 }}/{{ p.of }} 期 {{ fmt(p.amount) }}
+                    <span v-if="p.overdue" class="overdue-tag">逾期</span>
+                    <span class="muted">(繳款日 {{ p.dueDate.slice(5).replace('-', '/') }})</span>
+                  </span>
+                </label>
+                <div v-else-if="!linkedPeriods.length" class="card-payment-plan muted">
+                  {{ p.item }}<template v-if="p.lastIndex > 0"> 第 {{ p.lastIndex }}/{{ p.of }} 期已入帳{{ p.lastDate ? '(' + p.lastDate.slice(5).replace('-', '/') + ')' : '' }} ·</template> 下一期 {{ p.dueDate.slice(5).replace('-', '/') }} 繳款
+                </div>
+              </template>
+            </div>
+            <button v-if="isNew && payingCard && cardBillTotal > 0" type="button" class="link-button" @click="fillCardBill">帶入帳單金額 {{ fmt(cardBillTotal) }}(目前欠款{{ bookedInstallmentTotal > 0 ? ' + 勾選的分期' : '' }})</button>
           </label>
           <label v-if="crossCurrency">轉入金額({{ toCurrency }})
             <input type="number" step="any" min="0" v-model="form.toAmount" :placeholder="String(suggestedToAmount || '')" />

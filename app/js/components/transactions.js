@@ -21,17 +21,27 @@ const TransactionsView = {
     todayStr() {
       return Models.localToday();
     },
+    overdueInstallments() {
+      return Store.overdueInstallments();
+    },
+    overdueText() {
+      return this.overdueInstallments.map((o) => {
+        const card = Store.state.accounts.find((a) => a.id === o.recurring.accountId);
+        return `${card ? card.name + ' ' : ''}${o.recurring.installment.item || o.recurring.note} ${o.periods} 期`;
+      }).join('、');
+    },
     selectedHoliday() {
       return Models.holidayOf(this.selectedDay);
     },
     weekdayLabels() {
       return WEEKDAY_LABELS;
     },
-    // 固定支出 still to run and accounts' due dates, from tomorrow to the end
-    // of the month on screen (Models.projectedItems) — empty for a past month.
+    // 固定支出 still to run and accounts' due dates, from tomorrow (today for a
+    // card's 繳款日 and its installment periods) to the end of the month on
+    // screen (Models.projectedItems) — empty for a past month.
     projected() {
       const monthEnd = `${this.yearMonth}-31`;
-      if (monthEnd <= this.todayStr) return [];
+      if (this.yearMonth < this.todayStr.slice(0, 7)) return [];
       const { recurringTransactions, accounts, pledges } = Store.state;
       return Models.projectedItems({ recurrings: recurringTransactions, accounts, pledges }, this.todayStr, monthEnd)
         .filter((p) => p.date.startsWith(this.yearMonth))
@@ -235,6 +245,10 @@ const TransactionsView = {
       <div class="view-header">
         <h2>記帳</h2>
         <button class="primary" @click="openNew()">+ 新增</button>
+      </div>
+
+      <div v-if="overdueInstallments.length" class="notice-bar">
+        <span>⚠ 有 {{ overdueInstallments.length }} 筆信用卡分期過了繳款日還沒記:{{ overdueText }}。記繳卡費(轉帳到信用卡)時勾選就會入帳。</span>
       </div>
 
       <div class="panel-grid ledger-grid">

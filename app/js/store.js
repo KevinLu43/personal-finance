@@ -59,7 +59,48 @@ async function loadAll() {
   await migrateLabelSortOrder();
   await migrateBrokerageCurrency();
   await migrateLoanTypes();
+  await migrateInstallmentBilling();
+  await repairInstallmentCounts();
   await purgeOrphanLoanRecords();
+}
+
+// Installment plans made while each period was booked on the card's 結帳日
+// move to 繳款日 billing: the next period is now expected on the first 繳款日
+// on or after its old date and is booked by the card payment that settles
+// it. Periods already booked stay as they are. Marked `billing: 'payment'`, so
+// this runs once per plan.
+async function migrateInstallmentBilling() {
+  for (let i = 0; i < state.recurringTransactions.length; i++) {
+    const r = state.recurringTransactions[i];
+    if (!r.installment || r.installment.billing === 'payment') continue;
+    const card = state.accounts.find((a) => a.id === r.accountId);
+    const updated = JSON.parse(JSON.stringify({ ...r, installment: { ...r.installment, billing: 'payment' } }));
+    if (card && card.paymentDay >= 1 && !r.isArchived && r.remainingOccurrences > 0) {
+      updated.nextDueDate = Models.nextDayOfMonth(r.nextDueDate, card.paymentDay, true);
+      updated.anchorDay = card.paymentDay;
+    }
+    await Db.put('recurringTransactions', updated);
+    state.recurringTransactions[i] = updated;
+  }
+}
+
+// An earlier booking bug could move a plan on to its next period without
+// its entry being written (when a taken-back period's record was still
+// there, soft-deleted), so the plan counted a period as booked that no entry
+// shows — the card then looked overpaid by it. A running plan counting more
+// booked periods than it has entries steps back to expect the missing ones.
+async function repairInstallmentCounts() {
+  for (const r of state.recurringTransactions) {
+    if (!r.installment || r.isArchived || r.remainingOccurrences == null) continue;
+    const counted = Models.installmentIndex(r);
+    const booked = state.transactions.filter((t) => !t.isDeleted && t.recurringId === r.id).length;
+    const missing = counted - booked;
+    if (missing <= 0) continue;
+    await updateRecurring(r.id, {
+      nextDueDate: Models.subtractMonthsClamped(r.nextDueDate, r.anchorDay, missing),
+      remainingOccurrences: r.remainingOccurrences + missing,
+    });
+  }
 }
 
 // Loans deleted before deleteAccount learned to take a loan's records with it
@@ -622,6 +663,13 @@ async function updateTransaction(id, fields, labelNames = null) {
 }
 
 async function deleteTransaction(id) {
+  // A card payment takes back the installment periods it booked, so no
+  // period is left booked by a payment that no longer exists. Only periods
+  // that name it: one merely booked on the same card and day (periodsPaidBy's
+  // guess for older records) may belong to no payment at all, and a stale
+  // copy of a payment deleted on another device would take it with it.
+  const linked = periodsPaidBy(id).filter((t) => t.paidBy === id);
+  for (const period of linked) await unbookInstallmentPeriod(period);
   // Soft delete: the row stays (and stays valid for anything that already
   // referenced it) but disappears from every list and total.
   await updateTransaction(id, { isDeleted: true });
@@ -702,17 +750,16 @@ async function addRecurring(fields) {
 }
 
 // A credit card purchase paid in installments: instead of one expense for the
-// whole amount, a 固定收支 rule that books each period (本金平均攤還, see
-// Models.installmentSchedule) on the card's 結帳日, starting with the first
-// statement on or after the purchase (or on the purchase's own day of the
-// month when the card has no 結帳日) — booked right away when that day is
-// today or earlier. `rate` is a fraction. The plan keeps what was bought
-// (`item`: the note, else the category's name) and when, for each period's note.
+// whole amount, a 固定收支 plan (本金平均攤還, see Models.installmentSchedule)
+// whose periods are expected on the card's 繳款日 and booked by the card
+// payments that settle them. Nothing is booked on the purchase day; the whole
+// amount holds the card's limit until each period is. `rate` is a fraction.
+// The plan keeps what was bought (`item`: the note, else the category's name)
+// and when, for each period's note.
 async function addInstallmentPurchase(fields, labelNames, count, rate) {
   const schedule = Models.installmentSchedule(fields.amount, count, rate);
   const card = state.accounts.find((a) => a.id === fields.accountId);
-  const statementDay = card && card.statementDay >= 1 ? card.statementDay : null;
-  const firstDueDate = Models.installmentFirstDue(fields.date, statementDay);
+  const firstDueDate = Models.installmentFirstPayment(fields.date, card);
   const category = state.categories.find((c) => c.id === fields.categoryId);
   return addRecurring({
     type: 'expense',
@@ -722,7 +769,7 @@ async function addInstallmentPurchase(fields, labelNames, count, rate) {
     categoryId: fields.categoryId,
     note: fields.note,
     labelNames: [...labelNames],
-    anchorDay: statementDay || Number(fields.date.slice(8, 10)),
+    anchorDay: Number(firstDueDate.slice(8, 10)),
     occurrenceCount: schedule.length,
     firstDueDate,
     installment: {
@@ -731,9 +778,15 @@ async function addInstallmentPurchase(fields, labelNames, count, rate) {
       rate,
       purchaseDate: fields.date,
       item: fields.note || (category ? category.name : ''),
+      billing: 'payment',
       schedule,
     },
   });
+}
+
+// Installment periods past their 繳款日 that no card payment has booked yet.
+function overdueInstallments() {
+  return Models.overdueInstallments(state.recurringTransactions, Models.localToday());
 }
 
 // What a credit card can still take: its limit less what is owed now and the
@@ -779,6 +832,88 @@ async function deleteRecurring(id) {
   if (idx !== -1) state.recurringTransactions.splice(idx, 1);
 }
 
+// Books an installment plan's next period, dated `date` — what a card payment
+// that settles that period does. The transaction takes the id of the period's
+// scheduled 繳款日 and the plan moves on to the next period.
+async function bookNextInstallmentNow(ruleId, date, paidBy = null) {
+  const r = state.recurringTransactions.find((x) => x.id === ruleId);
+  if (!r || !r.installment || r.isArchived || !(r.remainingOccurrences > 0)) return;
+  // A period taken back earlier is still there, soft-deleted, and booking it
+  // again replaces it (addTransaction swaps a record with the same id). A
+  // live record on that id is another period booked under an older id
+  // scheme, so this one gets its number added.
+  let id = `rec:${r.id}:${r.nextDueDate}`;
+  if (state.transactions.some((t) => t.id === id && !t.isDeleted)) id += `:${Models.installmentIndex(r) + 1}`;
+  await addTransaction(
+    {
+      id,
+      date,
+      type: r.type,
+      amount: Models.recurringAmountAt(r, 0),
+      accountId: r.accountId,
+      toAccountId: r.toAccountId,
+      categoryId: r.categoryId,
+      note: Models.installmentNote(r, Models.installmentIndex(r)),
+      recurringId: r.id,
+      paidBy,
+    },
+    r.labelNames || []
+  );
+  const remainingOccurrences = r.remainingOccurrences - 1;
+  const fields = { nextDueDate: Models.addMonthClamped(r.nextDueDate, r.anchorDay), remainingOccurrences };
+  if (remainingOccurrences === 0) fields.isArchived = true;
+  await updateRecurring(r.id, fields);
+}
+
+// A plan's booked periods, latest first.
+function bookedInstallmentPeriods(ruleId) {
+  return state.transactions
+    .filter((t) => !t.isDeleted && t.recurringId === ruleId)
+    .sort((a, b) => (a.date === b.date ? (a.id < b.id ? 1 : -1) : a.date < b.date ? 1 : -1));
+}
+
+// The installment period a plan booked last, when `periodTx` is it: only
+// that one can be taken back, since the plan's schedule runs in order. Found
+// by date rather than id, since periods booked on the old 結帳日 schedule
+// carry ids of that schedule.
+function isLatestInstallmentPeriod(periodTx) {
+  const r = state.recurringTransactions.find((x) => x.id === periodTx.recurringId);
+  if (!r || !r.installment) return false;
+  const latest = bookedInstallmentPeriods(r.id)[0];
+  return !!latest && latest.id === periodTx.id;
+}
+
+// Takes back an installment period a card payment booked: the period's entry
+// goes, and its plan steps back to expect that period again (unarchived if it
+// had finished). Only the plan's latest period can go — false otherwise.
+async function unbookInstallmentPeriod(periodTx) {
+  if (!isLatestInstallmentPeriod(periodTx)) return false;
+  const r = state.recurringTransactions.find((x) => x.id === periodTx.recurringId);
+  await updateTransaction(periodTx.id, { isDeleted: true });
+  await updateRecurring(r.id, {
+    nextDueDate: Models.subtractMonthsClamped(r.nextDueDate, r.anchorDay, 1),
+    remainingOccurrences: (r.remainingOccurrences || 0) + 1,
+    isArchived: false,
+  });
+  return true;
+}
+
+// The installment periods a card payment booked, latest first (the order
+// they can be taken back in). Periods booked with a payment before paidBy
+// existed name no payment; one booked on the payment's card on its date is
+// taken as the payment's too.
+function periodsPaidBy(paymentId) {
+  const payment = state.transactions.find((t) => t.id === paymentId);
+  const legacy = (t) => {
+    if (t.paidBy || !payment || payment.type !== 'transfer' || t.date !== payment.date) return false;
+    const r = state.recurringTransactions.find((x) => x.id === t.recurringId);
+    return !!(r && r.installment && r.accountId === payment.toAccountId);
+  };
+  return state.transactions
+    .filter((t) => !t.isDeleted && (t.paidBy === paymentId || legacy(t)))
+    .sort((a, b) => (a.date === b.date ? (a.id < b.id ? 1 : -1) : a.date < b.date ? 1 : -1));
+}
+
 // Generates every occurrence of one recurring rule that is due but hasn't
 // been created yet, through the same addTransaction used everywhere else —
 // a generated row is a normal transaction, editable/deletable on its own.
@@ -786,7 +921,9 @@ async function deleteRecurring(id) {
 // purely for the ledger/年度總覽 chart to tell it apart from a hand-entered
 // one — deleting the rule later still leaves the transaction untouched.
 async function generateDueForOne(r) {
-  if (r.isArchived) return;
+  // An installment plan's periods are booked by the card payment that settles
+  // them (bookNextInstallmentNow), never on a date by themselves.
+  if (r.isArchived || r.installment) return;
   const today = Models.localToday();
   const { dates, nextDueDate, remainingOccurrences } = Models.dueOccurrences(r, today);
   if (dates.length === 0) return;
@@ -998,6 +1135,12 @@ window.Store = {
   dailyInvestmentTotals,
   addRecurring,
   addInstallmentPurchase,
+  bookNextInstallmentNow,
+  unbookInstallmentPeriod,
+  isLatestInstallmentPeriod,
+  periodsPaidBy,
+  bookedInstallmentPeriods,
+  overdueInstallments,
   creditCardStatus,
   updateRecurring,
   setRecurringArchived,

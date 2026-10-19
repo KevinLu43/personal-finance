@@ -356,6 +356,9 @@ function newTransaction(fields) {
     // recurring-generated row apart from one entered by hand, without
     // otherwise changing how it behaves (still freely editable/deletable).
     recurringId: fields.recurringId || null,
+    // An installment period booked by a card payment names that payment (the
+    // transfer), so editing or deleting the payment can find and undo it.
+    paidBy: fields.paidBy || null,
     // Likewise for a monthly installment of a loan (store.js's
     // generateLoanInstallments): both its principal transfer and its interest
     // expense carry the loan's id, so a payment can be recognised, grouped
@@ -1376,6 +1379,51 @@ function installmentFirstDue(purchaseDate, statementDay) {
   return thisMonth >= purchaseDate ? thisMonth : addMonthClamped(thisMonth, statementDay);
 }
 
+// The day an installment plan's first period is expected to be paid — its
+// period is booked when the card bill that holds it is paid, so the plan is
+// scheduled by 繳款日. With a 結帳日 too, the first bill is the first statement
+// on or after the purchase and it falls due on the next 繳款日 after that;
+// without one, it's taken to fall due on the 繳款日 of the month after the
+// purchase. A card with no 繳款日 uses the purchase's day of the month.
+function installmentFirstPayment(purchaseDate, card) {
+  const payDay = card && card.paymentDay >= 1 ? card.paymentDay : Number(purchaseDate.slice(8, 10));
+  if (!(card && card.statementDay >= 1 && card.paymentDay >= 1)) return addMonthClamped(purchaseDate, payDay);
+  return nextDayOfMonth(installmentFirstDue(purchaseDate, card.statementDay), payDay, false);
+}
+
+// The first date with day-of-month `day` (clamped to a short month) after
+// `date` — or on it, when `orSame`.
+function nextDayOfMonth(date, day, orSame) {
+  const [y, m] = date.slice(0, 7).split('-').map(Number);
+  const thisMonth = `${y}-${String(m).padStart(2, '0')}-${String(Math.min(day, new Date(y, m, 0).getDate())).padStart(2, '0')}`;
+  return thisMonth > date || (orSame && thisMonth === date) ? thisMonth : addMonthClamped(thisMonth, day);
+}
+
+// A due date that falls on a day off (weekend or holiday, per holidayOf)
+// moves to the next working day — what banks do with a card's 繳款日.
+function businessDayOnOrAfter(date) {
+  const d = new Date(date + 'T00:00:00Z');
+  for (let guard = 0; guard < 15 && holidayOf(d.toISOString().slice(0, 10)).off; guard++) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Installment periods whose 繳款日 has passed (before `today`) without the card
+// payment that books them: per running plan, how many and from which date.
+function overdueInstallments(recurrings, today) {
+  const rows = [];
+  for (const r of recurrings) {
+    if (!r.installment || r.isArchived || !(r.remainingOccurrences > 0) || !(businessDayOnOrAfter(r.nextDueDate) < today)) continue;
+    let cursor = r.nextDueDate;
+    let periods = 0;
+    while (cursor < today && periods < r.remainingOccurrences) {
+      periods++;
+      cursor = addMonthClamped(cursor, r.anchorDay);
+    }
+    rows.push({ recurring: r, periods, since: r.nextDueDate });
+  }
+  return rows;
+}
+
 // Where an installment rule's next run sits in its schedule (0-based): the
 // periods already booked are the count less what remains.
 function installmentIndex(recurring) {
@@ -1433,7 +1481,10 @@ function unbilledInstallmentPrincipal(recurrings, accountId) {
 // monthly 繳款日, a loan installment, a pledge's maturity. Those three carry
 // no amount: a card's bill isn't known until it closes, and a loan's split
 // depends on the balance on the day. Nothing here is booked; the real
-// transaction still only appears when Store.bookDueItems books it.
+// transaction still only appears when Store.bookDueItems books it. A card's
+// 繳款日 and an installment period due `fromDate` itself are included too:
+// neither is booked by the day arriving (a period waits for the card
+// payment), so today's still has to be paid.
 function projectedItems({ recurrings, accounts, pledges }, fromDate, toDate) {
   const items = [];
   const pad = (n) => String(n).padStart(2, '0');
@@ -1442,9 +1493,12 @@ function projectedItems({ recurrings, accounts, pledges }, fromDate, toDate) {
     let cursor = r.nextDueDate;
     let remaining = r.remainingOccurrences == null ? null : r.remainingOccurrences;
     for (let guard = 0; cursor <= toDate && (remaining == null || remaining > 0) && guard < 60; guard++) {
-      if (cursor > fromDate) {
+      // An installment period is paid with the card bill, so it moves off a
+      // day off with the bill's 繳款日.
+      const date = r.installment ? businessDayOnOrAfter(cursor) : cursor;
+      if ((date > fromDate || (r.installment && date === fromDate)) && date <= toDate) {
         items.push({
-          key: `rec:${r.id}:${cursor}`, date: cursor, kind: 'recurring', type: r.type, amount: recurringAmountAt(r, guard),
+          key: `rec:${r.id}:${cursor}`, date, kind: 'recurring', type: r.type, amount: recurringAmountAt(r, guard),
           accountId: r.accountId, toAccountId: r.toAccountId, categoryId: r.categoryId,
           note: r.installment ? installmentNote(r, installmentIndex(r) + guard) : r.note,
         });
@@ -1458,9 +1512,10 @@ function projectedItems({ recurrings, accounts, pledges }, fromDate, toDate) {
     if (a.kind === 'credit_card' && a.paymentDay >= 1) {
       let [y, m] = fromDate.slice(0, 7).split('-').map(Number);
       for (let guard = 0; guard < 120; guard++) {
-        const date = `${y}-${pad(m)}-${pad(Math.min(a.paymentDay, new Date(y, m, 0).getDate()))}`;
-        if (date > toDate) break;
-        if (date > fromDate) items.push({ key: `card:${a.id}:${date}`, date, kind: 'card', accountId: a.id });
+        const due = `${y}-${pad(m)}-${pad(Math.min(a.paymentDay, new Date(y, m, 0).getDate()))}`;
+        if (due > toDate) break;
+        const date = businessDayOnOrAfter(due);
+        if (date >= fromDate && date <= toDate) items.push({ key: `card:${a.id}:${due}`, date, kind: 'card', accountId: a.id });
         m += 1;
         if (m > 12) { m = 1; y += 1; }
       }
@@ -1705,6 +1760,10 @@ window.Models = {
   installmentSchedule,
   transactionSource,
   installmentFirstDue,
+  installmentFirstPayment,
+  nextDayOfMonth,
+  businessDayOnOrAfter,
+  overdueInstallments,
   installmentIndex,
   recurringAmountAt,
   installmentNote,

@@ -60,6 +60,12 @@ const RecurringFormModal = {
       const swiped = `${Number(plan.purchaseDate.slice(5, 7))}/${Number(plan.purchaseDate.slice(8, 10))}`;
       return `信用卡分期:${swiped} 刷卡 ${plan.item || ''} 總額 ${fmt(plan.total)} · 共 ${plan.count} 期 · 年利率 ${rate}% · 剩 ${left} 期。各期金額依分期計算(本金平均攤還),不能修改。提前清償時可以封存,之後不再入帳;已入帳的各期不受影響。`;
     },
+    // The plan's latest booked period, which can be taken back here when it
+    // was booked by mistake (the plan then expects it again).
+    latestPeriod() {
+      if (!this.installment) return null;
+      return Store.bookedInstallmentPeriods(this.existingRule.id)[0] || null;
+    },
   },
   watch: {
     // Leaving 轉帳 while a 證券交割 account is picked would leave a value the
@@ -155,6 +161,11 @@ const RecurringFormModal = {
       await Store.deleteRecurring(this.editingId);
       this.$emit('close');
     },
+    async unbookLatest() {
+      const t = this.latestPeriod;
+      if (!t || !confirm(`撤回「${t.note}」？這一期的紀錄會刪除，分期改回等待這一期繳款。`)) return;
+      await Store.unbookInstallmentPeriod(t);
+    },
   },
   template: `
     <div class="modal-backdrop" @click.self="cancel">
@@ -177,7 +188,13 @@ const RecurringFormModal = {
           <label v-else>執行週期
             <div class="field-hint" style="margin-top: 4px;">每月 {{ existingRule ? existingRule.anchorDay : '' }} 日(建立後不可修改,如需更改請刪除重建)</div>
           </label>
-          <div v-if="installment" class="field-group"><span class="field-hint">{{ installmentInfo }}</span></div>
+          <div v-if="installment" class="field-group">
+            <span class="field-hint">{{ installmentInfo }}</span>
+            <div v-if="latestPeriod" class="installment-latest">
+              <span>最近入帳:{{ latestPeriod.note }}({{ latestPeriod.date.slice(5).replace('-', '/') }} 入帳)</span>
+              <button type="button" @click="unbookLatest">撤回這一期</button>
+            </div>
+          </div>
           <template v-else>
           <label>執行期數(選填) <input type="number" min="1" v-model="form.occurrenceCount" placeholder="不限期數" />
             <span class="field-hint">設定這筆要總共執行幾次,執行完會自動封存;留空代表不限期數,持續執行下去</span>
@@ -311,7 +328,10 @@ const RecurringTransactionsPanel = {
         const card = this.accountName(r.accountId);
         if (done >= p.count) return `${card} · ${p.count} 期已全部入帳`;
         if (r.isArchived) return `${card} · 已停止(入帳 ${done}/${p.count} 期)`;
-        return `${card} · 第 ${done + 1}/${p.count} 期 ${r.nextDueDate} 入帳 · 每月 ${r.anchorDay} 日`;
+        const due = Models.businessDayOnOrAfter(r.nextDueDate);
+        const overdue = due < Models.localToday() ? ' · 逾期,繳卡費時勾選入帳' : '';
+        const moved = due !== r.nextDueDate ? '(遇假日順延)' : '';
+        return `${card} · 第 ${done + 1}/${p.count} 期 ${due}${moved} 繳款${overdue}`;
       }
       const parts = [`每月 ${r.anchorDay} 日`, `下次 ${r.nextDueDate}`];
       if (r.remainingOccurrences != null) parts.push(`剩 ${r.remainingOccurrences} 期`);

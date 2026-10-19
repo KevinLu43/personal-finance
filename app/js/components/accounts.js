@@ -11,6 +11,11 @@ const AccountRowItem = {
     cardStatus() {
       return this.isCredit ? Store.creditCardStatus(this.account) : null;
     },
+    // This card's installment periods past their 繳款日 with no payment booking them.
+    overdueOnCard() {
+      if (!this.isCredit) return [];
+      return Store.overdueInstallments().filter((o) => o.recurring.accountId === this.account.id);
+    },
     cardUsagePct() {
       const s = this.cardStatus;
       if (!s || !(s.limit > 0)) return { owed: 0, unbilled: 0 };
@@ -123,6 +128,7 @@ const AccountRowItem = {
           <span v-if="isCredit && account.paymentDay"> · {{ account.paymentDay }} 日繳款</span>
           <span v-if="isBrokerage"> · {{ account.market === 'TW' ? '台股' : '美股' }} · 手續費 {{ feeRateDisplay }}%</span>
         </div>
+        <div v-for="o in overdueOnCard" :key="o.recurring.id" class="list-row-sub negative">⚠ 分期逾期未記:{{ o.recurring.installment.item || o.recurring.note }} {{ o.periods }} 期(繳款日 {{ o.since }}起),記繳卡費時勾選即可</div>
         <div v-if="cardStatus && cardStatus.available !== null" class="credit-usage">
           <div class="credit-usage-text">
             <span>可用 <strong :class="{ negative: cardStatus.available < 0 }">{{ fmtCard(cardStatus.available) }}</strong></span>
@@ -671,7 +677,7 @@ const AccountsView = {
             </label>
             <label v-if="form.kind === 'credit_card'">每月結帳日(選填)
               <input type="number" min="1" max="31" v-model="form.statementDay" placeholder="例如 5" />
-              <span class="field-hint">刷卡分期會在每月結帳日記一期,第一期是刷卡後的第一個結帳日,跟帳單一致</span>
+              <span class="field-hint">選填。有填的話,用來推算刷卡分期的第一期在哪個月繳款</span>
             </label>
             <label v-if="form.kind === 'credit_card'">每月繳款日(選填)
               <input type="number" min="1" max="31" v-model="form.paymentDay" placeholder="例如 20" />
