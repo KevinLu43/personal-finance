@@ -507,17 +507,32 @@ const DashboardView = {
     labelBreakdown() {
       return Models.labelBreakdown(this.labelScopeTransactions, Store.state.transactionLabels, Store.state.labels);
     },
+    // A transaction carrying several labels counts in full under each (a
+    // label is a set it belongs to, not a share of it), so the rows overlap
+    // and are never summed: 其他 counts each of its transactions once, and
+    // 無標籤 closes the list with what carries none.
     labelBreakdownRows() {
-      return this.capBreakdown(this.labelBreakdown, 'label');
+      const rows = this.capBreakdown(this.labelBreakdown, 'label');
+      const other = rows.find((row) => row.otherRows);
+      if (other) {
+        const ids = new Set(other.otherRows.map((d) => d.label.id));
+        const tagged = new Set(Store.state.transactionLabels.filter((tl) => ids.has(tl.labelId)).map((tl) => tl.transactionId));
+        other.amount = this.labelScopeTransactions.filter((t) => tagged.has(t.id)).reduce((s, t) => s + t.amount, 0);
+      }
+      return rows;
     },
-    // The percentage base for 標籤統計's rows — same "sum of the rows
-    // actually shown" rule categoryBreakdownTotal uses, not a share of
-    // total period expense. Labels overlap by construction, so these
-    // percentages were never going to add up to 100% of anything anyway;
-    // this just answers "how does this label's total compare to the
-    // period's other labelled spending" one label at a time.
+    // What 標籤統計's scope holds that carries no label.
+    unlabelledAmount() {
+      const tagged = new Set(Store.state.transactionLabels.map((tl) => tl.transactionId));
+      return this.labelScopeTransactions.filter((t) => !tagged.has(t.id)).reduce((s, t) => s + t.amount, 0);
+    },
+    // The percentage base for 標籤統計's rows: everything in its scope (all
+    // the period's spending, or transfers), labelled or not. A share of that
+    // stays true however labels overlap — "8% of this month's spending was
+    // 早餐" — where a share of the labels' own sum would count a two-label
+    // transaction twice.
     labelBreakdownTotal() {
-      return this.labelBreakdown.reduce((s, row) => s + row.amount, 0);
+      return this.labelScopeTransactions.reduce((s, t) => s + t.amount, 0);
     },
     typeOptions() {
       return Object.entries(DASHBOARD_TYPE_LABELS).map(([type, label]) => ({ type, label }));
@@ -946,6 +961,15 @@ const DashboardView = {
       const inCategory = this.periodExpenseTransactions.filter((t) => t.categoryId === categoryId);
       return Models.labelBreakdown(inCategory, Store.state.transactionLabels, Store.state.labels);
     },
+    // The category's 依標籤 rows, closed by 無標籤 when part of it carries none.
+    categoryLabelRows(categoryId) {
+      const rows = this.categoryLabelBreakdown(categoryId);
+      const tagged = new Set(Store.state.transactionLabels.map((tl) => tl.transactionId));
+      const untagged = this.periodExpenseTransactions
+        .filter((t) => t.categoryId === categoryId && !tagged.has(t.id))
+        .reduce((s, t) => s + t.amount, 0);
+      return untagged > 0 ? [...rows, { label: { id: '__none__', name: '(無標籤)', color: '#adb5bd' }, amount: untagged }] : rows;
+    },
     // A different kind is a different list; don't keep a label expanded across it.
     setLabelKind(kind) {
       this.labelKind = kind;
@@ -1118,12 +1142,27 @@ const DashboardView = {
         rows: (spansMonths ? this.labelMonthBreakdown(labelId) : this.labelDayBreakdown(labelId))
           .map((d) => ({ key: spansMonths ? d.key : d.date, name: d.label, pct: d.pct, text: this.fmt(d.amount) })),
       });
+      // The labels its transactions also carry: where two labels meet (日本旅行
+      // and 交通), each in full, as a share of this label's spend.
+      const together = this.labelCoBreakdown(labelId);
+      if (together.length) {
+        sections.push({
+          title: '搭配的標籤',
+          open: false,
+          rows: together.map((d) => ({ key: d.label.id, name: `${d.label.icon || '🏷️'} ${d.label.name}`, color: d.label.color || '#6d6875', pct: share(d.amount), text: this.fmt(d.amount) })),
+        });
+      }
       sections.push({
         title: '依備註',
         open: false,
         rows: this.labelNoteBreakdown(labelId).map((d) => ({ key: d.note, name: d.note, pct: share(d.amount), text: this.fmt(d.amount) })),
       });
       return { summary: this.labelSummaryText(labelId), sections };
+    },
+    labelCoBreakdown(labelId) {
+      const txs = this.labelTransactions(labelId);
+      const others = Models.labelBreakdown(txs, Store.state.transactionLabels, Store.state.labels);
+      return others.filter((d) => d.label.id !== labelId);
     },
     labelNoteBreakdown(labelId) {
       const byNote = new Map();
@@ -1366,10 +1405,10 @@ const DashboardView = {
               </template>
               <template v-else>
                 <div v-if="categoryLabelBreakdown(row.category.id).length === 0" class="empty">這個分類底下的交易都還沒有標籤</div>
-                <div v-for="d in categoryLabelBreakdown(row.category.id)" :key="d.label.id" class="category-detail-row">
+                <div v-for="d in (categoryLabelBreakdown(row.category.id).length ? categoryLabelRows(row.category.id) : [])" :key="d.label.id" class="category-detail-row" :class="{ muted: d.label.id === '__none__' }">
                   <span class="category-detail-note">{{ d.label.name }}</span>
                   <span class="category-detail-bar-track">
-                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%' }"></span>
+                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.label.id === '__none__' ? d.label.color : undefined }"></span>
                   </span>
                   <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
                 </div>
@@ -1507,6 +1546,12 @@ const DashboardView = {
             <LabelDetail v-else :detail="labelDetail(row.label.id, row.amount)" />
           </div>
         </div>
+        <div v-if="labelBreakdown.length && unlabelledAmount > 0" class="bar-row muted">
+          <span class="icon-badge-sm" style="background: #adb5bd30">∅</span>
+          <span class="bar-name">無標籤</span>
+          <span class="bar-amount">{{ fmt(unlabelledAmount) }} · {{ fmtLabelPercent(unlabelledAmount) }}</span>
+        </div>
+        <div v-if="labelBreakdown.length" class="muted asset-formula">百分比是佔{{ labelScope === 'all' ? '全部' : (viewMode === 'year' ? '本年' : '本月') }}{{ labelKind === 'transfer' ? '轉帳' : '支出' }}的比例;一筆有多個標籤時會分別計入,所以各列不加總</div>
       </section>
 
       <section style="order: 5;" v-if="activeSummary.incomeCategoryBreakdown.length" class="panel">
