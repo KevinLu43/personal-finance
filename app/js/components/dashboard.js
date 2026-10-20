@@ -382,10 +382,150 @@ const DashboardView = {
     // Budgets are a standing monthly cap; the year view compares a whole
     // year's spend against 12 months of it instead of leaving budgets out
     // of year mode entirely.
+    //
+    // A category's 固定支出 (recurring rules, card installment periods, loan
+    // interest) arrives in one lump on its day, so it isn't paced: only the
+    // rest of the budget, what's left after those, is compared with how much
+    // of the period has passed. Fixed charges still to come this period count
+    // as committed — against the category and against 還可花.
     budgetProgress() {
       const breakdown = this.viewMode === 'year' ? this.yearSummary.categoryBreakdown : this.monthSummary.categoryBreakdown;
       const periods = this.viewMode === 'year' ? 12 : 1;
-      return Models.budgetProgress(Store.state.categories, breakdown, periods);
+      const elapsed = this.budgetElapsed;
+      const upcoming = this.budgetUpcomingFixed;
+      const fixedBooked = new Map();
+      for (const t of this.periodExpenseTransactions) {
+        if (t.recurringId || t.loanId) fixedBooked.set(t.categoryId, (fixedBooked.get(t.categoryId) || 0) + t.amount);
+      }
+      return Models.budgetProgress(Store.state.categories, breakdown, periods).map((row) => {
+        const id = row.category.id;
+        const coming = upcoming.byCategory.get(id) || 0;
+        const booked = fixedBooked.get(id) || 0;
+        const flexBudget = row.limit - booked - coming;
+        const flexSpent = row.spent - booked;
+        const threshold = row.category.budgetWarningThreshold ?? 0.8;
+        let status = 'ok';
+        let fast = false;
+        if (row.spent >= row.limit) status = 'over';
+        else if (row.spent + coming > row.limit) status = 'warning';
+        else if (flexBudget > 0 && flexSpent > 0) {
+          const flexRatio = flexSpent / flexBudget;
+          fast = elapsed > 0 && elapsed < 1 && flexRatio > elapsed + 0.1;
+          if (flexRatio >= threshold || fast) status = 'warning';
+        }
+        // The pace mark sits where the flexible part should have reached by
+        // today, on top of the fixed part (all of which counts as due).
+        const paceAt = elapsed > 0 && elapsed < 1 && flexBudget > 0 ? (booked + coming + flexBudget * elapsed) / row.limit : null;
+        return { ...row, status, fast, coming, flexBudget, flexSpent, paceAt };
+      });
+    },
+    // How much of the period on screen has passed: 0 ahead, 1 behind, and the
+    // fraction of today's month (or year) for the current one.
+    budgetElapsed() {
+      const today = Models.localToday();
+      const [y, m, d] = today.split('-').map(Number);
+      const dim = new Date(y, m, 0).getDate();
+      if (this.viewMode === 'year') {
+        if (this.year < y) return 1;
+        if (this.year > y) return 0;
+        return (m - 1 + d / dim) / 12;
+      }
+      if (this.yearMonth < today.slice(0, 7)) return 1;
+      if (this.yearMonth > today.slice(0, 7)) return 0;
+      return d / dim;
+    },
+    // 固定支出 not booked yet in the period on screen, from today on: what
+    // recurring rules and card installment periods will still charge each
+    // category, and each loan's installments (principal + estimated interest,
+    // the interest under 利息).
+    budgetUpcomingFixed() {
+      const byCategory = new Map();
+      const loans = new Map();
+      const today = Models.localToday();
+      const end = this.viewMode === 'year' ? `${this.year}-12-31` : `${this.yearMonth}-31`;
+      if (end < today) return { byCategory, loans };
+      const { recurringTransactions, accounts } = Store.state;
+      const interestCategory = Store.state.categories.find((c) => c.kind === 'expense' && c.name === '利息');
+      const items = Models.projectedItems({ recurrings: recurringTransactions, accounts, pledges: [] }, today, end)
+        .filter((p) => p.date.startsWith(this.periodPrefix));
+      for (const p of items) {
+        if (p.kind === 'recurring' && p.type === 'expense') {
+          const amount = Store.baseAmountOf({ amount: p.amount, accountId: p.accountId, date: p.date });
+          byCategory.set(p.categoryId, (byCategory.get(p.categoryId) || 0) + amount);
+        } else if (p.kind === 'loan') {
+          const loan = accounts.find((a) => a.id === p.accountId);
+          const left = loan.loanInstallments - loan.loanPaidInstallments;
+          const b = Models.installmentBreakdown(Store.accountBalance(loan), loan.loanRate, left);
+          const row = loans.get(loan.id) || { principal: 0, interest: 0, dates: [] };
+          row.principal += Math.round(b.principal);
+          row.interest += Math.round(b.interest);
+          row.dates.push(p.date);
+          loans.set(loan.id, row);
+          if (interestCategory) byCategory.set(interestCategory.id, (byCategory.get(interestCategory.id) || 0) + Math.round(b.interest));
+        }
+      }
+      return { byCategory, loans };
+    },
+    // The 預算 panel's top line: every budgeted category together.
+    budgetTotal() {
+      const rows = this.budgetProgress;
+      const limit = rows.reduce((s, r) => s + r.limit, 0);
+      const spent = rows.reduce((s, r) => s + r.spent, 0);
+      const coming = rows.reduce((s, r) => s + r.coming, 0);
+      const free = limit - spent - coming;
+      const elapsed = this.budgetElapsed;
+      // Paced like a category: the flexible part of all budgets together.
+      const flexBudget = rows.reduce((s, r) => s + Math.max(0, r.flexBudget), 0);
+      const flexSpent = rows.reduce((s, r) => s + Math.max(0, r.flexSpent), 0);
+      const fast = elapsed > 0 && elapsed < 1 && flexBudget > 0 && flexSpent / flexBudget > elapsed + 0.1;
+      const over = rows.filter((r) => r.status === 'over').map((r) => r.category.name);
+      const status = spent >= limit ? 'over' : free < 0 || fast || over.length ? 'warning' : 'ok';
+      const budgeted = new Set(rows.map((r) => r.category.id));
+      const unbudgeted = this.activeSummary.categoryBreakdown
+        .filter((r) => !budgeted.has(r.category.id))
+        .reduce((s, r) => s + r.amount, 0);
+      return {
+        limit, spent, coming, free, status, unbudgeted, over, fast,
+        // The total bar's mark: fixed charges all due, the rest by the calendar.
+        paceAt: elapsed > 0 && elapsed < 1 && limit > 0 ? Math.min(1, (limit - flexBudget + flexBudget * elapsed) / limit) : null,
+        elapsed,
+      };
+    },
+    // Each loan's installments in the period: what has been paid (its booked
+    // principal transfer and interest) and what is still to come (estimated).
+    // Shown beside the budget, never counted in it — principal is debt being
+    // repaid, not money spent, and the interest is already under 利息.
+    budgetLoanLines() {
+      const upcoming = this.budgetUpcomingFixed.loans;
+      const lines = [];
+      for (const loan of Store.state.accounts) {
+        if (loan.kind !== 'loan' || loan.loanType === 'pledge' || loan.isArchived) continue;
+        let principal = 0;
+        let interest = 0;
+        for (const t of this.periodLoanTransactions) {
+          if (t.loanId !== loan.id) continue;
+          if (t.type === 'transfer' && t.toAccountId === loan.id) principal += t.amount;
+          else if (t.type === 'expense') interest += t.amount;
+        }
+        const coming = upcoming.get(loan.id);
+        if (!principal && !interest && !coming) continue;
+        if (coming) {
+          principal += coming.principal;
+          interest += coming.interest;
+        }
+        const dates = coming ? coming.dates : [];
+        let when;
+        if (this.viewMode === 'year') when = dates.length ? `尚有 ${dates.length} 期待扣(預估)` : '今年已全部扣款';
+        else when = dates.length ? `${Number(dates[0].slice(8, 10))} 日扣款(預估)` : '已扣款';
+        lines.push({
+          id: loan.id,
+          text: `${loan.name} ${this.viewMode === 'year' ? '今年' : '本月'}還款 ${this.fmt(principal + interest)}(本金 ${this.fmt(principal)} + 利息 ${this.fmt(interest)})· ${when}`,
+        });
+      }
+      return lines;
+    },
+    periodLoanTransactions() {
+      return Store.baseTransactionList().filter((t) => !t.isDeleted && t.loanId && t.date.startsWith(this.periodPrefix));
     },
     // Month mode's 固定支出: every recurring rule and every loan that was paid
     // this month as its own line, charted as a donut. Loan payments count in
@@ -1435,6 +1575,22 @@ const DashboardView = {
 
       <section style="order: 2;" v-if="budgetProgress.length" class="panel">
         <h3>預算<span v-if="viewMode === 'year'" class="muted"> · 全年(每月上限 × 12)</span></h3>
+        <div class="budget-total">
+          <div class="budget-total-top">
+            <span class="budget-total-label">{{ budgetTotal.free >= 0 ? '還可花' : '預計超出' }}</span>
+            <span class="budget-total-free" :class="budgetTotal.status">{{ fmt(Math.abs(budgetTotal.free)) }}</span>
+          </div>
+          <div class="muted budget-total-sub">已花 {{ fmt(budgetTotal.spent) }} / 預算 {{ fmt(budgetTotal.limit) }}<template v-if="budgetTotal.coming > 0"> · 待扣固定支出 {{ fmt(budgetTotal.coming) }}</template></div>
+          <div class="budget-track">
+            <div class="budget-fill" :class="budgetTotal.status" :style="{ width: Math.min(budgetTotal.spent / budgetTotal.limit, 1) * 100 + '%' }"></div>
+            <div v-if="budgetTotal.coming > 0" class="budget-fill-coming" :style="{ left: Math.min(budgetTotal.spent / budgetTotal.limit, 1) * 100 + '%', width: Math.max(0, Math.min(budgetTotal.coming / budgetTotal.limit, 1 - budgetTotal.spent / budgetTotal.limit)) * 100 + '%' }"></div>
+            <div v-if="budgetTotal.paceAt !== null" class="budget-pace" :style="{ left: budgetTotal.paceAt * 100 + '%' }"></div>
+          </div>
+          <div v-if="budgetTotal.paceAt !== null" class="muted budget-total-note">細線是今天應花到的位置({{ viewMode === 'year' ? '今年' : '本月' }}過了 {{ Math.round(budgetTotal.elapsed * 100) }}%)<template v-if="budgetTotal.fast"> · <span class="warning-text">花費速度偏快</span></template></div>
+          <div v-if="budgetTotal.over.length" class="budget-total-note negative">⚠ {{ budgetTotal.over.length }} 個分類已超支:{{ budgetTotal.over.join('、') }}</div>
+          <div v-if="budgetTotal.unbudgeted > 0" class="muted budget-total-note">另有未設預算的分類支出 {{ fmt(budgetTotal.unbudgeted) }}</div>
+          <div v-for="l in budgetLoanLines" :key="l.id" class="muted budget-total-note">🏦 {{ l.text }}</div>
+        </div>
         <div v-for="row in budgetProgress" :key="row.category.id" class="budget-row">
           <div class="budget-row-top">
             <span class="icon-badge-sm" :style="{ background: (row.category.color || '#adb5bd') + '30' }">{{ row.category.icon }}</span>
@@ -1443,6 +1599,8 @@ const DashboardView = {
           </div>
           <div class="budget-track">
             <div class="budget-fill" :class="row.status" :style="{ width: Math.min(row.ratio, 1) * 100 + '%' }"></div>
+            <div v-if="row.coming > 0" class="budget-fill-coming" :style="{ left: Math.min(row.ratio, 1) * 100 + '%', width: Math.max(0, Math.min(row.coming / row.limit, 1 - row.ratio)) * 100 + '%' }"></div>
+            <div v-if="row.paceAt !== null" class="budget-pace" :style="{ left: Math.min(row.paceAt, 1) * 100 + '%' }"></div>
           </div>
         </div>
       </section>
