@@ -151,6 +151,7 @@ const DashboardView = {
       typeFilters: [], // subset of expense/income/transfer; empty means "all"
       editingId: null,
       expandedCategoryId: null, // which 分類支出 row is expanded, one at a time
+      expandedOtherCategoryId: null, // which category folded under 支出分類's 其他 is expanded
       categorySectionToggled: {}, // year view: that row's sections the operator folded/unfolded, by title
       expandedLabelId: null, // which 標籤統計 row is expanded, one at a time
       expandedOtherLabelId: null, // ...and, when that row is 其他, which label inside it is expanded
@@ -1026,6 +1027,34 @@ const DashboardView = {
       const max = Math.max(...totals, 1);
       return totals.map((amount, i) => ({ month: i + 1, amount, pct: (amount / max) * 100 }));
     },
+    toggleOtherCategoryExpand(categoryId) {
+      this.expandedOtherCategoryId = this.expandedOtherCategoryId === categoryId ? null : categoryId;
+    },
+    // A category folded under 其他, expanded: the same 依標籤 (and in year
+    // view 逐月比較) a category of its own shows, in LabelDetail's shape.
+    otherCategoryDetail(d) {
+      const count = this.periodExpenseTransactions.filter((t) => t.categoryId === d.category.id).length;
+      const labelled = this.categoryLabelBreakdown(d.category.id).length > 0;
+      const sections = labelled ? [{
+        title: '依標籤',
+        open: true,
+        rows: this.categoryLabelRows(d.category.id).map((l) => ({
+          key: l.label.id,
+          name: l.label.name,
+          color: l.label.id === '__none__' ? l.label.color : undefined,
+          pct: d.amount > 0 ? (l.amount / d.amount) * 100 : 0,
+          text: this.fmt(l.amount),
+        })),
+      }] : [];
+      if (this.viewMode === 'year') {
+        sections.push({
+          title: '逐月比較',
+          open: false,
+          rows: this.categoryMonthlyBreakdown(d).map((m) => ({ key: 'm' + m.month, name: `${m.month}月`, color: d.category.color || '#adb5bd', pct: m.pct, text: this.fmt(m.amount) })),
+        });
+      }
+      return { summary: `${count} 筆 · 共 ${this.fmt(d.amount)}${labelled ? '' : ' · 都還沒有標籤'}`, sections };
+    },
     categoryMonthlyBreakdown(row) {
       const ids = row.otherRows ? new Set(row.otherRows.map((d) => d.category.id)) : new Set([row.category.id]);
       return this.monthlyAmountsForCategories(ids);
@@ -1535,13 +1564,18 @@ const DashboardView = {
               </div>
               <template v-if="viewMode !== 'year' || isCategorySectionOpen(row.otherRows ? '依分類' : '依標籤', true)">
               <template v-if="row.otherRows">
-                <div v-for="d in row.otherRows" :key="d.category.id" class="category-detail-row">
-                  <span class="category-detail-note">{{ d.category.icon }} {{ d.category.name }}</span>
-                  <span class="category-detail-bar-track">
-                    <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color || '#adb5bd' }"></span>
-                  </span>
-                  <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
-                </div>
+                <template v-for="d in row.otherRows" :key="d.category.id">
+                  <div class="category-detail-row clickable-row" @click="toggleOtherCategoryExpand(d.category.id)">
+                    <span class="category-detail-note"><span class="expand-arrow" :class="{ open: expandedOtherCategoryId === d.category.id }">›</span>{{ d.category.icon }} {{ d.category.name }}</span>
+                    <span class="category-detail-bar-track">
+                      <span class="category-detail-bar-fill" :style="{ width: (d.amount / row.amount * 100) + '%', background: d.category.color || '#adb5bd' }"></span>
+                    </span>
+                    <span class="category-detail-amount">{{ fmt(d.amount) }}</span>
+                  </div>
+                  <div v-if="expandedOtherCategoryId === d.category.id" class="category-detail">
+                    <LabelDetail :detail="otherCategoryDetail(d)" />
+                  </div>
+                </template>
               </template>
               <template v-else>
                 <div v-if="categoryLabelBreakdown(row.category.id).length === 0" class="empty">這個分類底下的交易都還沒有標籤</div>
