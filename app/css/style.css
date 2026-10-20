@@ -1319,6 +1319,15 @@ button.primary {
 .installment-summary { margin: -4px 0 12px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 13px; }
 .installment-summary .muted { margin-top: 2px; display: block; }
 .link-button { border: none; background: none; padding: 4px 0 0; color: var(--accent); font-size: 12px; cursor: pointer; }
+/* A suggested value to fill in with one tap (a card's bill): a pill that
+   reads as a button, ticked once its value is in. */
+.modal .suggest-chip { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; width: auto; margin-top: 8px; padding: 6px 12px; border: 1px solid var(--accent); border-radius: 999px; background: var(--bg); color: var(--accent); font-size: 13px; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.modal .suggest-chip:hover { background: var(--line); }
+.modal .suggest-chip:active { transform: scale(0.97); }
+.modal .suggest-chip.selected { background: var(--accent); color: #fff; }
+.suggest-chip strong { font-weight: 700; }
+.suggest-chip-icon { font-size: 14px; line-height: 1; }
+.suggest-chip-note { font-size: 11px; opacity: 0.75; }
 .installment-table { margin-top: 6px; }
 .installment-table-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .installment-table-row span:first-child { width: 48px; flex-shrink: 0; }

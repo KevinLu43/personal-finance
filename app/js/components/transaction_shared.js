@@ -321,6 +321,17 @@ const TransactionFormModal = {
       if (!this.payingCard) return 0;
       return Math.max(0, Store.accountBalance(this.payingCard)) + this.bookedInstallmentTotal;
     },
+    // Paying a card: the empty amount field already shows the bill, and the
+    // chip under the card offers to fill it in (ticked once it has).
+    billOffered() {
+      return this.isNew && !!this.payingCard && this.cardBillTotal > 0;
+    },
+    billHint() {
+      return this.billOffered && !this.form.amount ? this.fmt(this.cardBillTotal) : '0';
+    },
+    billFilled() {
+      return this.billOffered && Number(this.form.amount) === this.cardBillTotal;
+    },
     overLimit() {
       const s = this.cardStatus;
       if (!s || s.available === null) return 0;
@@ -622,7 +633,7 @@ const TransactionFormModal = {
             </select>
           </label>
           <label>日期 <input type="date" v-model="form.date" /></label>
-          <label>金額{{ amountSymbol }} <CalculatorField v-model="form.amount" /></label>
+          <label>金額{{ amountSymbol }} <CalculatorField v-model="form.amount" :placeholder="billHint" /></label>
           <label>{{ form.type === 'transfer' ? '轉出帳戶' : '帳戶' }}
             <select v-model="form.accountId">
               <optgroup v-for="g in accountGroups" :key="g.label" :label="g.label">
@@ -688,7 +699,10 @@ const TransactionFormModal = {
                 </div>
               </template>
             </div>
-            <button v-if="isNew && payingCard && cardBillTotal > 0" type="button" class="link-button" @click="fillCardBill">帶入帳單金額 {{ fmt(cardBillTotal) }}(目前欠款{{ bookedInstallmentTotal > 0 ? ' + 勾選的分期' : '' }})</button>
+            <button v-if="billOffered" type="button" class="suggest-chip" :class="{ selected: billFilled }" @click="fillCardBill">
+              <span class="suggest-chip-icon" aria-hidden="true">{{ billFilled ? '✓' : '⤵' }}</span>{{ billFilled ? '已帶入帳單金額' : '帶入帳單金額' }} <strong>{{ fmt(cardBillTotal) }}</strong>
+              <span class="suggest-chip-note">{{ bookedInstallmentTotal > 0 ? '欠款 + 勾選的分期' : '目前欠款' }}</span>
+            </button>
           </label>
           <label v-if="crossCurrency">轉入金額({{ toCurrency }})
             <input type="number" step="any" min="0" v-model="form.toAmount" :placeholder="String(suggestedToAmount || '')" />

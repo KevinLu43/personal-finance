@@ -8,6 +8,7 @@ const CALC_OPERATORS = ['+', '-', '×', '÷'];
 const CalculatorField = {
   props: {
     modelValue: { type: [String, Number], default: '' },
+    placeholder: { type: String, default: '0' }, // a hint shown while empty (e.g. a card's bill)
   },
   emits: ['update:modelValue'],
   data() {
@@ -83,7 +84,7 @@ const CalculatorField = {
       <div class="calc-input-row">
         <input
           type="text" inputmode="decimal" class="calc-display"
-          v-model="text" placeholder="0"
+          v-model="text" :placeholder="placeholder"
           @keydown="onKeydown" @blur="commit"
         />
         <button type="button" class="calc-open-btn" @click="openPad" aria-label="開啟計算機">🧮</button>
