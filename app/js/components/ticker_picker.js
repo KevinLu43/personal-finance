@@ -46,6 +46,14 @@ const TickerPickerField = {
         .slice(0, 8)
         .map((s) => s.t);
     },
+    // The name of the ticker in the field, once it is exactly one the
+    // directory knows — shown after the code, never saved with it.
+    pickedName() {
+      const code = this.query.trim().toUpperCase();
+      if (!code) return '';
+      const t = (TickerDirectory[this.market] || []).find((d) => d.code.toUpperCase() === code);
+      return t ? t.name : '';
+    },
   },
   methods: {
     onInput(e) {
@@ -65,6 +73,9 @@ const TickerPickerField = {
         @focus="focused = true" @blur="focused = false"
         placeholder="輸入代號或名稱，例如：00919 / NVDA / 台積"
       />
+      <div v-if="pickedName" class="ticker-picked" aria-hidden="true">
+        <span class="ticker-picked-code">{{ query }}</span><span class="ticker-picked-name">{{ pickedName }}</span>
+      </div>
       <div v-if="focused && matches.length" class="ticker-suggestions">
         <div
           v-for="t in matches" :key="t.code" class="ticker-suggestion"
